@@ -64,7 +64,7 @@ Unknown top-level fields are rejected with `400`.
 ```json
 {
   "accepted": true,
-  "jobId": "flush:ventas:c_01H...:1714281600000-a3f1d2c4",
+  "jobId": "flush_ventas_c_01H..._1714281600000-a3f1d2c4",
   "deduplicated": false,
   "debounced": false
 }
@@ -138,7 +138,7 @@ arrival, the worker fires a single forward:
 ```http
 POST $CHAT_API_URL/chat
 content-type: application/json
-x-webhook-job-id: flush:ventas:c1:1714281605000-7af2d91c
+x-webhook-job-id: flush_ventas_c1_1714281605000-7af2d91c
 x-webhook-received-at: 2026-04-28T12:00:00.000Z
 x-request-id: <uuid>
 

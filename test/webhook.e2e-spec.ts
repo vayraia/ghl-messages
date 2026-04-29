@@ -112,7 +112,7 @@ describe('Webhook (e2e)', () => {
 
   it('accepts a valid request, schedules a debounced flush, and returns 202', async () => {
     queueMock.getJob.mockResolvedValue(undefined);
-    queueMock.add.mockResolvedValue({ id: 'flush:ventas:c-1:t1' });
+    queueMock.add.mockResolvedValue({ id: 'flush_ventas_c-1_t1' });
 
     const res = await request(app.getHttpServer())
       .post('/v1/webhook')

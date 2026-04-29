@@ -105,7 +105,8 @@ export class MessageDebouncer {
       }
     }
 
-    const newJobId = `flush:${input.agentId}:${input.contactId}:${Date.now()}-${randomUUID().slice(0, 8)}`;
+    // BullMQ rejects custom job IDs containing ':', so we use '_' as the separator.
+    const newJobId = `flush_${input.agentId}_${input.contactId}_${Date.now()}-${randomUUID().slice(0, 8)}`;
 
     await this.queue.add(
       WEBHOOK_FLUSH_JOB,

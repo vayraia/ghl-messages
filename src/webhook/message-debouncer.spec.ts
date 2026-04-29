@@ -60,7 +60,7 @@ describe('MessageDebouncer', () => {
         [null, 1],
       ]);
       redisMock.get.mockResolvedValue(null);
-      queueMock.add.mockResolvedValue({ id: 'flush:ventas:c1:t1' });
+      queueMock.add.mockResolvedValue({ id: 'flush_ventas_c1_t1' });
 
       const result = await debouncer.accept({
         agentId: 'ventas',
@@ -83,7 +83,7 @@ describe('MessageDebouncer', () => {
       expect(opts.delay).toBe(10_000);
       expect(opts.attempts).toBe(3);
       expect(opts.backoff).toEqual({ type: 'exponential', delay: 1000 });
-      expect(opts.jobId).toMatch(/^flush:ventas:c1:\d+-[0-9a-f]+$/);
+      expect(opts.jobId).toMatch(/^flush_ventas_c1_\d+-[0-9a-f]+$/);
       expect(opts.removeOnComplete).toBe(true);
 
       expect(redisMock.set).toHaveBeenCalledWith('debounce:flush:ventas:c1', opts.jobId, 'EX', 300);
@@ -96,10 +96,10 @@ describe('MessageDebouncer', () => {
         [null, 2],
         [null, 1],
       ]);
-      redisMock.get.mockResolvedValue('flush:ventas:c1:older');
+      redisMock.get.mockResolvedValue('flush_ventas_c1_older');
       const remove = jest.fn().mockResolvedValue(undefined);
       queueMock.getJob.mockResolvedValue({ remove });
-      queueMock.add.mockResolvedValue({ id: 'flush:ventas:c1:newer' });
+      queueMock.add.mockResolvedValue({ id: 'flush_ventas_c1_newer' });
 
       await debouncer.accept({
         agentId: 'ventas',
@@ -109,7 +109,7 @@ describe('MessageDebouncer', () => {
         requestId: undefined,
       });
 
-      expect(queueMock.getJob).toHaveBeenCalledWith('flush:ventas:c1:older');
+      expect(queueMock.getJob).toHaveBeenCalledWith('flush_ventas_c1_older');
       expect(remove).toHaveBeenCalledTimes(1);
     });
 
@@ -118,11 +118,11 @@ describe('MessageDebouncer', () => {
         [null, 1],
         [null, 1],
       ]);
-      redisMock.get.mockResolvedValue('flush:ventas:c1:active');
+      redisMock.get.mockResolvedValue('flush_ventas_c1_active');
       queueMock.getJob.mockResolvedValue({
         remove: jest.fn().mockRejectedValue(new Error('locked')),
       });
-      queueMock.add.mockResolvedValue({ id: 'flush:ventas:c1:newer' });
+      queueMock.add.mockResolvedValue({ id: 'flush_ventas_c1_newer' });
 
       await expect(
         debouncer.accept({
