@@ -38,6 +38,18 @@ export class AllExceptionsFilter implements ExceptionFilter {
         },
         'Unhandled exception',
       );
+    } else if (status === HttpStatus.BAD_REQUEST) {
+      this.logger.warn(
+        {
+          method: request.method,
+          path: request.url,
+          status,
+          requestId: request.headers['x-request-id'],
+          body: request.body,
+          response: payload,
+        },
+        'Validation failed',
+      );
     }
 
     response
