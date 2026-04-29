@@ -15,11 +15,12 @@ export type ReplyChannel = 'WhatsApp' | 'IG' | 'FB';
  * known substrings (`whatsapp`, `instagram`/`ig`, `facebook`/`fb`).
  */
 export function resolveReplyChannel(payload: WebhookPayloadDto): ReplyChannel {
+  const messageType = payload.message?.type;
   const candidates: string[] = [
     payload.contact?.lastAttributionSource?.medium ?? '',
     payload.contact?.attributionSource?.medium ?? '',
     payload.customData?.channel ?? '',
-    payload.message?.type ?? '',
+    typeof messageType === 'string' ? messageType : '',
   ];
 
   for (const raw of candidates) {

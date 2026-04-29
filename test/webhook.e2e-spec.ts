@@ -70,7 +70,7 @@ describe('Webhook (e2e)', () => {
     app = moduleRef.createNestApplication();
     app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' });
     app.useGlobalPipes(
-      new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
+      new ValidationPipe({ whitelist: true, forbidNonWhitelisted: false, transform: true }),
     );
     await app.init();
   });
@@ -163,7 +163,7 @@ describe('Webhook (e2e)', () => {
     expect(queueMock.add).not.toHaveBeenCalled();
   });
 
-  it('rejects payloads missing the required agent_id (400)', async () => {
+  it('rejects payloads missing both top-level and customData agent_id (400)', async () => {
     await request(app.getHttpServer())
       .post('/v1/webhook')
       .set(WEBHOOK_SECRET_HEADER, SECRET)
@@ -171,12 +171,38 @@ describe('Webhook (e2e)', () => {
       .expect(400);
   });
 
-  it('rejects payloads with unknown fields (whitelist validation)', async () => {
+  it('falls back to customData.agent_id when top-level is missing', async () => {
+    queueMock.add.mockResolvedValue({ id: 'flush-fb' });
+
     await request(app.getHttpServer())
       .post('/v1/webhook')
       .set(WEBHOOK_SECRET_HEADER, SECRET)
-      .send({ ...validBody(), secretLeak: 'should-not-pass' })
-      .expect(400);
+      .send({
+        contact_id: 'c-1',
+        message: { body: 'hola' },
+        customData: { agent_id: 'ventas-from-custom' },
+      })
+      .expect(202);
+
+    expect(queueMock.add).toHaveBeenCalledTimes(1);
+    const [, data] = queueMock.add.mock.calls[0];
+    expect(data).toEqual({ agentId: 'ventas-from-custom', contactId: 'c-1' });
+  });
+
+  it('silently strips unknown top-level fields and accepts the request', async () => {
+    queueMock.add.mockResolvedValue({ id: 'flush-strip' });
+
+    await request(app.getHttpServer())
+      .post('/v1/webhook')
+      .set(WEBHOOK_SECRET_HEADER, SECRET)
+      .send({
+        ...validBody(),
+        first_name: 'Fabio',
+        phone: '+51930265817',
+        location: { id: 'loc-1' },
+        workflow: { id: 'wf-1' },
+      })
+      .expect(202);
   });
 
   it('echoes a request id in the response headers', async () => {

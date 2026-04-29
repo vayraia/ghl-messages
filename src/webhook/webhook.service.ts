@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Redis } from 'ioredis';
 import { AppEnv } from '../config/env.validation';
@@ -49,11 +49,18 @@ export class WebhookService {
       }
     }
 
+    const agentId = payload.agent_id ?? payload.customData?.agent_id;
+    if (!agentId) {
+      throw new BadRequestException(
+        'agent_id is required (top level or customData.agent_id)',
+      );
+    }
+
     const body = (payload.message?.body ?? payload.customData?.message ?? '').trim();
     if (!body) {
       // No usable text — silently acknowledge so GHL stops retrying.
       this.logger.debug(
-        { agentId: payload.agent_id, contactId: payload.contact_id },
+        { agentId, contactId: payload.contact_id },
         'Empty inbound message — acknowledged without enqueuing',
       );
       return { jobId: '', deduplicated: false, debounced: false, pendingCount: 0 };
@@ -62,7 +69,7 @@ export class WebhookService {
     const replyChannel = resolveReplyChannel(payload);
 
     const result = await this.debouncer.accept({
-      agentId: payload.agent_id,
+      agentId,
       contactId: payload.contact_id,
       body,
       replyChannel,

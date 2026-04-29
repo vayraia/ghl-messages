@@ -124,6 +124,26 @@ describe('WebhookService', () => {
     expect(debouncerMock.accept).not.toHaveBeenCalled();
   });
 
+  it('falls back to customData.agent_id when top-level is missing', async () => {
+    debouncerMock.accept.mockResolvedValue({ jobId: 'flush-cd', pendingCount: 1 });
+
+    await service.ingest(
+      basePayload({ agent_id: undefined, customData: { agent_id: 'from-custom' } }),
+      {},
+    );
+
+    expect(debouncerMock.accept).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: 'from-custom' }),
+    );
+  });
+
+  it('throws BadRequest when both agent_id sources are missing', async () => {
+    await expect(
+      service.ingest(basePayload({ agent_id: undefined }), {}),
+    ).rejects.toThrow('agent_id is required');
+    expect(debouncerMock.accept).not.toHaveBeenCalled();
+  });
+
   it('passes the resolved replyChannel from contact attribution', async () => {
     debouncerMock.accept.mockResolvedValue({ jobId: 'flush-5', pendingCount: 1 });
 

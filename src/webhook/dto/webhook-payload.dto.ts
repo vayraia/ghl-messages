@@ -1,23 +1,15 @@
 import { Type } from 'class-transformer';
-import { IsObject, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
+import { Allow, IsObject, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
 
-class AttributionSourceDto {
-  @IsOptional()
-  @IsString()
-  @MaxLength(64)
+export interface AttributionSource {
   medium?: string;
+  [key: string]: unknown;
 }
 
-class ContactInfoDto {
-  @IsOptional()
-  @ValidateNested()
-  @Type(() => AttributionSourceDto)
-  attributionSource?: AttributionSourceDto;
-
-  @IsOptional()
-  @ValidateNested()
-  @Type(() => AttributionSourceDto)
-  lastAttributionSource?: AttributionSourceDto;
+export interface ContactInfo {
+  attributionSource?: AttributionSource;
+  lastAttributionSource?: AttributionSource;
+  [key: string]: unknown;
 }
 
 class CustomDataDto {
@@ -30,6 +22,11 @@ class CustomDataDto {
   @IsString()
   @MaxLength(64)
   channel?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  agent_id?: string;
 }
 
 class MessageDto {
@@ -38,24 +35,27 @@ class MessageDto {
   @MaxLength(8000)
   body?: string;
 
-  @IsOptional()
-  @IsString()
-  @MaxLength(64)
-  type?: string;
+  @Allow()
+  type?: string | number;
 }
 
 /**
  * Webhook payload contract.
  *
- * `agent_id` and `contact_id` are required because the worker debounces and
- * forwards by that pair. `message.body` (or `customData.message` as a
- * fallback) carries the user text. Other fields are optional metadata
- * preserved for downstream consumers.
+ * `contact_id` is required because the worker debounces and forwards by
+ * (agent_id, contact_id). `agent_id` is read from the top level if present,
+ * otherwise from `customData.agent_id` (the location GHL Workflows use).
+ * `message.body` (or `customData.message` as a fallback) carries the user
+ * text. The validation pipe is configured with `whitelist: true` and
+ * `forbidNonWhitelisted: false`, so any extra fields GHL sends pass through
+ * silently — they are stripped from the validated instance and never reach
+ * the service layer.
  */
 export class WebhookPayloadDto {
+  @IsOptional()
   @IsString()
   @MaxLength(64)
-  agent_id!: string;
+  agent_id?: string;
 
   @IsString()
   @MaxLength(64)
@@ -72,9 +72,8 @@ export class WebhookPayloadDto {
   customData?: CustomDataDto;
 
   @IsOptional()
-  @ValidateNested()
-  @Type(() => ContactInfoDto)
-  contact?: ContactInfoDto;
+  @IsObject()
+  contact?: ContactInfo;
 
   @IsOptional()
   @IsString()
