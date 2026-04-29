@@ -47,14 +47,59 @@ describe('resolveReplyChannel', () => {
     ).toBe('IG');
   });
 
-  it('uses customData.channel as fallback', () => {
+  it('uses customData.channel when present', () => {
     expect(resolveReplyChannel(payload({ customData: { channel: 'FB' } }))).toBe('FB');
   });
 
-  it('uses message.type as last resort', () => {
+  it('customData.channel overrides attribution source', () => {
+    expect(
+      resolveReplyChannel(
+        payload({
+          customData: { channel: 'WhatsApp' },
+          contact: { lastAttributionSource: { medium: 'instagram' } },
+        }),
+      ),
+    ).toBe('WhatsApp');
+  });
+
+  it('uses string message.type when present', () => {
     expect(resolveReplyChannel(payload({ message: { type: 'whatsapp', body: 'hi' } }))).toBe(
       'WhatsApp',
     );
+  });
+
+  it('maps numeric message.type 19 to WhatsApp', () => {
+    expect(resolveReplyChannel(payload({ message: { type: 19, body: 'hi' } }))).toBe('WhatsApp');
+  });
+
+  it('maps numeric message.type 18 to IG', () => {
+    expect(resolveReplyChannel(payload({ message: { type: 18, body: 'hi' } }))).toBe('IG');
+  });
+
+  it('maps numeric message.type 11 to FB', () => {
+    expect(resolveReplyChannel(payload({ message: { type: 11, body: 'hi' } }))).toBe('FB');
+  });
+
+  it('numeric message.type overrides attribution source', () => {
+    expect(
+      resolveReplyChannel(
+        payload({
+          message: { type: 19, body: 'hi' },
+          contact: { lastAttributionSource: { medium: 'instagram' } },
+        }),
+      ),
+    ).toBe('WhatsApp');
+  });
+
+  it('falls through to attribution when numeric type is unknown', () => {
+    expect(
+      resolveReplyChannel(
+        payload({
+          message: { type: 2, body: 'hi' },
+          contact: { lastAttributionSource: { medium: 'instagram' } },
+        }),
+      ),
+    ).toBe('IG');
   });
 
   it('returns WhatsApp default when none of the hints match a known channel', () => {
