@@ -35,6 +35,9 @@ x-webhook-secret: <secret-from-WEBHOOK_SECRET>
   "contact_id": "c_01HZX...",
   "message": { "body": "Hola, quería más info" },
 
+  "first_name": "Fabio",
+  "last_name": "Coronado",
+
   "customData": { "channel": "WhatsApp" },
   "contact": { "lastAttributionSource": { "medium": "WhatsApp" } }
 }
@@ -50,6 +53,9 @@ x-webhook-secret: <secret-from-WEBHOOK_SECRET>
 | `customData.channel`                        | string | no       | Hint for `replyChannel`                                      |
 | `contact.lastAttributionSource.medium`      | string | no       | Highest-priority `replyChannel` hint                          |
 | `contact.attributionSource.medium`          | string | no       | Second-priority `replyChannel` hint                           |
+| `name`                                      | string | no       | Highest-priority source for `contact_data.name` in `/chat`   |
+| `full_name`                                 | string | no       | Second-priority source for `contact_data.name`               |
+| `first_name`, `last_name`                   | string | no       | Joined as `"first last"` when `name`/`full_name` are absent  |
 | `event`, `id`, `data`                       | any    | no       | Pass-through metadata, kept for future expansion             |
 
 ¹ At least one of `message.body` / `customData.message` must yield
@@ -145,7 +151,7 @@ x-request-id: <uuid>
 {
   "agent_id": "ventas",
   "contact_id": "c1",
-  "contact_data": {},
+  "contact_data": { "name": "Fabio Coronado" },
   "message": { "body": "hola\nbuen día\nquiero info" }
 }
 ```
@@ -168,7 +174,7 @@ GHL  ──POST──►  /v1/webhook
                                   WebhookProcessor.process
                                           ├─ drain Redis list (LRANGE + DEL atomic)
                                           ├─ POST $CHAT_API_URL/chat
-                                          │     body: { agent_id, contact_id, contact_data, message: { body } }
+                                          │     body: { agent_id, contact_id, contact_data: { name? }, message: { body } }
                                           │     → expects { message: string }
                                           └─ POST $GHL_API_BASE_URL/conversations/messages
                                                 Authorization: Bearer $GHL_API_KEY
@@ -184,10 +190,16 @@ The forwarder POSTs:
 {
   "agent_id": "ventas",
   "contact_id": "c_01H...",
-  "contact_data": {},
+  "contact_data": { "name": "Fabio Coronado" },
   "message": { "body": "hola\nbuen día" }
 }
 ```
+
+`contact_data.name` is included only when the inbound webhook supplies a
+non-blank `name`, `full_name`, or `first_name`/`last_name`. When all three
+are absent or blank, `contact_data` is sent as `{}`. When several messages
+collapse into one flush, the **last** message's name wins (mirrors how
+`replyChannel` is resolved).
 
 Headers added by the forwarder:
 

@@ -10,6 +10,7 @@ export interface ChatRequest {
   agentId: string;
   contactId: string;
   body: string;
+  contactName?: string;
   receivedAt: string;
   requestId: string | undefined;
 }
@@ -60,7 +61,7 @@ export class WebhookForwarder {
     const body = {
       agent_id: req.agentId,
       contact_id: req.contactId,
-      contact_data: {},
+      contact_data: req.contactName ? { name: req.contactName } : {},
       message: { body: req.body },
     };
 

@@ -23,8 +23,10 @@ describe('Webhook (e2e)', () => {
 
   // Minimal in-memory Redis stub matching the calls the service & debouncer
   // make. We simulate SET NX (idempotency) and the multi() pipeline used by
-  // the debouncer's RPUSH+EXPIRE.
+  // the debouncer's RPUSH+EXPIRE. rpush is a stable mock so tests can
+  // inspect the serialized fragment that would land in Redis.
   const idemStore = new Map<string, string>();
+  const rpushMock = jest.fn().mockReturnThis();
   const redisStub = {
     set: jest.fn(async (key: string, value: string, _ex?: string, _ttl?: number, mode?: string) => {
       if (mode === 'NX') {
@@ -36,19 +38,16 @@ describe('Webhook (e2e)', () => {
       return 'OK';
     }),
     get: jest.fn(async () => null),
-    multi: jest.fn(() => {
-      const tx = {
-        rpush: jest.fn().mockReturnThis(),
-        expire: jest.fn().mockReturnThis(),
-        lrange: jest.fn().mockReturnThis(),
-        del: jest.fn().mockReturnThis(),
-        exec: jest.fn(async () => [
-          [null, 1],
-          [null, 1],
-        ]),
-      };
-      return tx;
-    }),
+    multi: jest.fn(() => ({
+      rpush: rpushMock,
+      expire: jest.fn().mockReturnThis(),
+      lrange: jest.fn().mockReturnThis(),
+      del: jest.fn().mockReturnThis(),
+      exec: jest.fn(async () => [
+        [null, 1],
+        [null, 1],
+      ]),
+    })),
     quit: jest.fn().mockResolvedValue(undefined),
     disconnect: jest.fn(),
   };
@@ -82,6 +81,7 @@ describe('Webhook (e2e)', () => {
   beforeEach(() => {
     queueMock.add.mockReset();
     queueMock.getJob.mockReset();
+    rpushMock.mockClear();
     idemStore.clear();
   });
 
@@ -189,7 +189,7 @@ describe('Webhook (e2e)', () => {
     expect(data).toEqual({ agentId: 'ventas-from-custom', contactId: 'c-1' });
   });
 
-  it('silently strips unknown top-level fields and accepts the request', async () => {
+  it('silently strips truly unknown top-level fields and accepts the request', async () => {
     queueMock.add.mockResolvedValue({ id: 'flush-strip' });
 
     await request(app.getHttpServer())
@@ -197,12 +197,32 @@ describe('Webhook (e2e)', () => {
       .set(WEBHOOK_SECRET_HEADER, SECRET)
       .send({
         ...validBody(),
-        first_name: 'Fabio',
         phone: '+51930265817',
         location: { id: 'loc-1' },
         workflow: { id: 'wf-1' },
       })
       .expect(202);
+  });
+
+  it('preserves declared name fields and forwards them to the debouncer', async () => {
+    queueMock.add.mockResolvedValue({ id: 'flush-name' });
+
+    await request(app.getHttpServer())
+      .post('/v1/webhook')
+      .set(WEBHOOK_SECRET_HEADER, SECRET)
+      .send({
+        ...validBody(),
+        first_name: 'Fabio',
+        last_name: 'Coronado',
+      })
+      .expect(202);
+
+    expect(rpushMock).toHaveBeenCalledTimes(1);
+    const [, fragment] = rpushMock.mock.calls[0];
+    expect(JSON.parse(fragment as string)).toMatchObject({
+      body: 'hola',
+      contactName: 'Fabio Coronado',
+    });
   });
 
   it('echoes a request id in the response headers', async () => {

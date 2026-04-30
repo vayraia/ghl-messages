@@ -67,12 +67,17 @@ describe('MessageDebouncer', () => {
         contactId: 'c1',
         body: 'hola',
         replyChannel: 'WhatsApp',
+        contactName: 'Fabio',
         requestId: 'req-1',
       });
 
       expect(tx.rpush).toHaveBeenCalledWith(
         'debounce:msgs:ventas:c1',
         expect.stringContaining('"body":"hola"'),
+      );
+      expect(tx.rpush).toHaveBeenCalledWith(
+        'debounce:msgs:ventas:c1',
+        expect.stringContaining('"contactName":"Fabio"'),
       );
       expect(tx.expire).toHaveBeenCalledWith('debounce:msgs:ventas:c1', 300);
 
@@ -144,12 +149,14 @@ describe('MessageDebouncer', () => {
         JSON.stringify({
           body: 'a',
           replyChannel: 'WhatsApp',
+          contactName: 'First Name',
           requestId: 'r1',
           receivedAt: '2026-04-28T00:00:00.000Z',
         }),
         JSON.stringify({
           body: 'b',
           replyChannel: 'IG',
+          contactName: 'Last Name',
           requestId: 'r2',
           receivedAt: '2026-04-28T00:00:01.000Z',
         }),
@@ -167,7 +174,9 @@ describe('MessageDebouncer', () => {
       expect(tx.del).toHaveBeenCalledWith('debounce:flush:ventas:c1');
       expect(items).toHaveLength(2);
       expect(items[0].body).toBe('a');
+      expect(items[0].contactName).toBe('First Name');
       expect(items[1].replyChannel).toBe('IG');
+      expect(items[1].contactName).toBe('Last Name');
     });
 
     it('returns an empty array when the list is empty', async () => {

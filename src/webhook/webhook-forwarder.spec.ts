@@ -77,6 +77,31 @@ describe('WebhookForwarder', () => {
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
   });
 
+  it('emits contact_data.name when a contactName is provided', async () => {
+    const { forwarder, post } = makeForwarder();
+    post.mockResolvedValue({ status: 200, data: { message: 'ok' } });
+
+    await forwarder.forward({ ...baseReq, contactName: 'Fabio Coronado' });
+
+    const [, body] = post.mock.calls[0];
+    expect(body).toEqual({
+      agent_id: 'ventas',
+      contact_id: 'c-1',
+      contact_data: { name: 'Fabio Coronado' },
+      message: { body: 'hola\nbuen día' },
+    });
+  });
+
+  it('keeps contact_data empty when contactName is absent', async () => {
+    const { forwarder, post } = makeForwarder();
+    post.mockResolvedValue({ status: 200, data: { message: 'ok' } });
+
+    await forwarder.forward(baseReq);
+
+    const [, body] = post.mock.calls[0];
+    expect(body.contact_data).toEqual({});
+  });
+
   it('returns the message field from the chat response', async () => {
     const { forwarder, post } = makeForwarder();
     post.mockResolvedValue({ status: 200, data: { message: 'Hola, buenos días ☺️' } });

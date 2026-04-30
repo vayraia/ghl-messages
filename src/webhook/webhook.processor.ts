@@ -60,6 +60,7 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
     const concatenated = items.map((i) => i.body).join('\n');
     const last = items[items.length - 1];
     const replyChannel = last.replyChannel;
+    const contactName = last.contactName;
     const requestId = last.requestId;
     const receivedAt = items[0].receivedAt;
 
@@ -80,6 +81,7 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
       agentId,
       contactId,
       body: concatenated,
+      contactName,
       receivedAt,
       requestId,
     });

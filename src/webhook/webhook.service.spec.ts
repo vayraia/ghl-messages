@@ -138,9 +138,9 @@ describe('WebhookService', () => {
   });
 
   it('throws BadRequest when both agent_id sources are missing', async () => {
-    await expect(
-      service.ingest(basePayload({ agent_id: undefined }), {}),
-    ).rejects.toThrow('agent_id is required');
+    await expect(service.ingest(basePayload({ agent_id: undefined }), {})).rejects.toThrow(
+      'agent_id is required',
+    );
     expect(debouncerMock.accept).not.toHaveBeenCalled();
   });
 
@@ -155,5 +155,74 @@ describe('WebhookService', () => {
     expect(debouncerMock.accept).toHaveBeenCalledWith(
       expect.objectContaining({ replyChannel: 'IG' }),
     );
+  });
+
+  describe('contactName resolution', () => {
+    beforeEach(() => {
+      debouncerMock.accept.mockResolvedValue({ jobId: 'flush-name', pendingCount: 1 });
+    });
+
+    it('uses top-level name when present', async () => {
+      await service.ingest(basePayload({ name: 'Fabio Coronado' }), {});
+      expect(debouncerMock.accept).toHaveBeenCalledWith(
+        expect.objectContaining({ contactName: 'Fabio Coronado' }),
+      );
+    });
+
+    it('falls back to full_name when name is missing', async () => {
+      await service.ingest(basePayload({ full_name: 'Fabio Coronado' }), {});
+      expect(debouncerMock.accept).toHaveBeenCalledWith(
+        expect.objectContaining({ contactName: 'Fabio Coronado' }),
+      );
+    });
+
+    it('falls back to first_name + last_name when name and full_name are missing', async () => {
+      await service.ingest(basePayload({ first_name: 'Fabio', last_name: 'Coronado' }), {});
+      expect(debouncerMock.accept).toHaveBeenCalledWith(
+        expect.objectContaining({ contactName: 'Fabio Coronado' }),
+      );
+    });
+
+    it('uses only first_name when last_name is missing', async () => {
+      await service.ingest(basePayload({ first_name: 'Fabio' }), {});
+      expect(debouncerMock.accept).toHaveBeenCalledWith(
+        expect.objectContaining({ contactName: 'Fabio' }),
+      );
+    });
+
+    it('uses only last_name when first_name is missing', async () => {
+      await service.ingest(basePayload({ last_name: 'Coronado' }), {});
+      expect(debouncerMock.accept).toHaveBeenCalledWith(
+        expect.objectContaining({ contactName: 'Coronado' }),
+      );
+    });
+
+    it('honours the preference order name > full_name > first/last', async () => {
+      await service.ingest(
+        basePayload({
+          name: 'PRIMARY',
+          full_name: 'SECONDARY',
+          first_name: 'Third',
+          last_name: 'Tier',
+        }),
+        {},
+      );
+      expect(debouncerMock.accept).toHaveBeenCalledWith(
+        expect.objectContaining({ contactName: 'PRIMARY' }),
+      );
+    });
+
+    it('trims whitespace and treats blank-only sources as missing', async () => {
+      await service.ingest(basePayload({ name: '   ', full_name: '  Fabio  ' }), {});
+      expect(debouncerMock.accept).toHaveBeenCalledWith(
+        expect.objectContaining({ contactName: 'Fabio' }),
+      );
+    });
+
+    it('omits contactName when no source is present', async () => {
+      await service.ingest(basePayload(), {});
+      const callArg = debouncerMock.accept.mock.calls[0][0];
+      expect(callArg.contactName).toBeUndefined();
+    });
   });
 });

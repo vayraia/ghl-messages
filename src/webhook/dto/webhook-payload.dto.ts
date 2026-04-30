@@ -50,6 +50,11 @@ class MessageDto {
  * `forbidNonWhitelisted: false`, so any extra fields GHL sends pass through
  * silently — they are stripped from the validated instance and never reach
  * the service layer.
+ *
+ * Contact name is read with the preference order
+ * `name` → `full_name` → `${first_name} ${last_name}` and forwarded to the
+ * chat API as `contact_data.name`. Each source is declared explicitly so
+ * the whitelist does not strip them.
  */
 export class WebhookPayloadDto {
   @IsOptional()
@@ -74,6 +79,26 @@ export class WebhookPayloadDto {
   @IsOptional()
   @IsObject()
   contact?: ContactInfo;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  full_name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  first_name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  last_name?: string;
 
   @IsOptional()
   @IsString()

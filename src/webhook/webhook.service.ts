@@ -51,9 +51,7 @@ export class WebhookService {
 
     const agentId = payload.agent_id ?? payload.customData?.agent_id;
     if (!agentId) {
-      throw new BadRequestException(
-        'agent_id is required (top level or customData.agent_id)',
-      );
+      throw new BadRequestException('agent_id is required (top level or customData.agent_id)');
     }
 
     const body = (payload.message?.body ?? payload.customData?.message ?? '').trim();
@@ -67,12 +65,14 @@ export class WebhookService {
     }
 
     const replyChannel = resolveReplyChannel(payload);
+    const contactName = resolveContactName(payload);
 
     const result = await this.debouncer.accept({
       agentId,
       contactId: payload.contact_id,
       body,
       replyChannel,
+      contactName,
       requestId: opts.requestId,
     });
 
@@ -87,4 +87,18 @@ export class WebhookService {
 
 function idempotencyKeyFor(key: string): string {
   return `webhook:idem:${key}`;
+}
+
+function resolveContactName(payload: WebhookPayloadDto): string | undefined {
+  const direct = payload.name?.trim();
+  if (direct) return direct;
+
+  const full = payload.full_name?.trim();
+  if (full) return full;
+
+  const composed = [payload.first_name, payload.last_name]
+    .map((p) => p?.trim() ?? '')
+    .filter((p) => p.length > 0)
+    .join(' ');
+  return composed.length > 0 ? composed : undefined;
 }
