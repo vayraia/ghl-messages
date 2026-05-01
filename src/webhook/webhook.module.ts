@@ -5,6 +5,7 @@ import { Redis } from 'ioredis';
 import { AppEnv } from '../config/env.validation';
 import { buildRedisOptions } from '../config/redis.config';
 import { WebhookController } from './webhook.controller';
+import { WebhookOutboundController } from './webhook-outbound.controller';
 import { WebhookService } from './webhook.service';
 import { WebhookProcessor } from './webhook.processor';
 import { WebhookForwarder } from './webhook-forwarder';
@@ -34,7 +35,7 @@ class RedisClientLifecycle implements OnApplicationShutdown {
       },
     }),
   ],
-  controllers: [WebhookController],
+  controllers: [WebhookController, WebhookOutboundController],
   providers: [
     {
       provide: WEBHOOK_REDIS_CLIENT,
