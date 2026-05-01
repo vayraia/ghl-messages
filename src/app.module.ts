@@ -10,6 +10,7 @@ import { envValidationSchema, AppEnv } from './config/env.validation';
 import { buildRedisOptions } from './config/redis.config';
 import { WebhookModule } from './webhook/webhook.module';
 import { HealthModule } from './health/health.module';
+import { OAuthModule } from './oauth/oauth.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { HealthModule } from './health/health.module';
     }),
     WebhookModule,
     HealthModule,
+    OAuthModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
