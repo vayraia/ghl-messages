@@ -54,6 +54,8 @@ describe('WebhookService', () => {
       contactId: 'c-1',
       body: 'hola',
       replyChannel: 'WhatsApp',
+      contactName: undefined,
+      locationId: undefined,
       requestId: 'req-1',
     });
     expect(result).toEqual({
@@ -155,6 +157,25 @@ describe('WebhookService', () => {
     expect(debouncerMock.accept).toHaveBeenCalledWith(
       expect.objectContaining({ replyChannel: 'IG' }),
     );
+  });
+
+  it('forwards top-level location.id as locationId', async () => {
+    debouncerMock.accept.mockResolvedValue({ jobId: 'flush-loc', pendingCount: 1 });
+
+    await service.ingest(basePayload({ location: { id: 'loc_abc' } }), {});
+
+    expect(debouncerMock.accept).toHaveBeenCalledWith(
+      expect.objectContaining({ locationId: 'loc_abc' }),
+    );
+  });
+
+  it('omits locationId when location.id is missing or blank', async () => {
+    debouncerMock.accept.mockResolvedValue({ jobId: 'flush-loc-empty', pendingCount: 1 });
+
+    await service.ingest(basePayload({ location: { id: '   ' } }), {});
+
+    const callArg = debouncerMock.accept.mock.calls[0][0];
+    expect(callArg.locationId).toBeUndefined();
   });
 
   describe('contactName resolution', () => {

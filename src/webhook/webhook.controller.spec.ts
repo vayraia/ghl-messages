@@ -1,7 +1,12 @@
 import { Test } from '@nestjs/testing';
+import type { Request } from 'express';
 import { WebhookController } from './webhook.controller';
 import { WebhookService } from './webhook.service';
 import { WebhookSecretGuard } from './guards/webhook-secret.guard';
+
+function fakeReq(body: unknown): Request {
+  return { body } as unknown as Request;
+}
 
 describe('WebhookController', () => {
   const serviceMock = { ingest: jest.fn() };
@@ -29,8 +34,10 @@ describe('WebhookController', () => {
       pendingCount: 1,
     });
 
+    const payload = { agent_id: 'ventas', contact_id: 'c-1', message: { body: 'hi' } };
     const response = await controller.ingest(
-      { agent_id: 'ventas', contact_id: 'c-1', message: { body: 'hi' } },
+      fakeReq(payload),
+      payload,
       'idem-1',
       'req-1',
     );
@@ -55,8 +62,10 @@ describe('WebhookController', () => {
       pendingCount: 0,
     });
 
+    const payload = { agent_id: 'ventas', contact_id: 'c-1' };
     const response = await controller.ingest(
-      { agent_id: 'ventas', contact_id: 'c-1' },
+      fakeReq(payload),
+      payload,
       'idem-2',
       undefined,
     );
@@ -77,8 +86,10 @@ describe('WebhookController', () => {
       pendingCount: 3,
     });
 
+    const payload = { agent_id: 'ventas', contact_id: 'c-1', message: { body: '3rd' } };
     const response = await controller.ingest(
-      { agent_id: 'ventas', contact_id: 'c-1', message: { body: '3rd' } },
+      fakeReq(payload),
+      payload,
       undefined,
       undefined,
     );

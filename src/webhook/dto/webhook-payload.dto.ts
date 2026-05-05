@@ -39,6 +39,13 @@ class MessageDto {
   type?: string | number;
 }
 
+class LocationDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  id?: string;
+}
+
 /**
  * Webhook payload contract.
  *
@@ -75,6 +82,11 @@ export class WebhookPayloadDto {
   @ValidateNested()
   @Type(() => CustomDataDto)
   customData?: CustomDataDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => LocationDto)
+  location?: LocationDto;
 
   @IsOptional()
   @IsObject()

@@ -20,7 +20,9 @@ export interface AppEnv {
   CHAT_API_URL: string;
   CHAT_API_TIMEOUT_MS: number;
 
-  GHL_API_KEY: string;
+  JOBS_URL: string;
+  JOBS_API_TIMEOUT_MS: number;
+
   GHL_API_BASE_URL: string;
   GHL_API_VERSION: string;
   GHL_API_TIMEOUT_MS: number;
@@ -53,7 +55,11 @@ export const envValidationSchema = Joi.object<AppEnv, true>({
     .required(),
   CHAT_API_TIMEOUT_MS: Joi.number().integer().min(100).default(15_000),
 
-  GHL_API_KEY: Joi.string().min(1).required(),
+  JOBS_URL: Joi.string()
+    .uri({ scheme: ['http', 'https'] })
+    .required(),
+  JOBS_API_TIMEOUT_MS: Joi.number().integer().min(100).default(10_000),
+
   GHL_API_BASE_URL: Joi.string()
     .uri({ scheme: ['http', 'https'] })
     .default('https://services.leadconnectorhq.com'),

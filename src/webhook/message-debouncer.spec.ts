@@ -68,6 +68,7 @@ describe('MessageDebouncer', () => {
         body: 'hola',
         replyChannel: 'WhatsApp',
         contactName: 'Fabio',
+        locationId: 'loc_abc',
         requestId: 'req-1',
       });
 
@@ -78,6 +79,10 @@ describe('MessageDebouncer', () => {
       expect(tx.rpush).toHaveBeenCalledWith(
         'debounce:msgs:ventas:c1',
         expect.stringContaining('"contactName":"Fabio"'),
+      );
+      expect(tx.rpush).toHaveBeenCalledWith(
+        'debounce:msgs:ventas:c1',
+        expect.stringContaining('"locationId":"loc_abc"'),
       );
       expect(tx.expire).toHaveBeenCalledWith('debounce:msgs:ventas:c1', 300);
 

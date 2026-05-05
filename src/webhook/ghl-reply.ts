@@ -10,6 +10,7 @@ export interface GhlReplyInput {
   contactId: string;
   message: string;
   type: ReplyChannel;
+  apiKey: string;
 }
 
 export interface GhlReplyResult {
@@ -29,7 +30,6 @@ export class GhlReply {
 
   constructor(config: ConfigService<AppEnv, true>) {
     const baseURL: string = config.get('GHL_API_BASE_URL', { infer: true });
-    const apiKey: string = config.get('GHL_API_KEY', { infer: true });
     const version: string = config.get('GHL_API_VERSION', { infer: true });
     const timeout: number = config.get('GHL_API_TIMEOUT_MS', { infer: true });
 
@@ -37,7 +37,6 @@ export class GhlReply {
       baseURL,
       timeout,
       headers: {
-        Authorization: `Bearer ${apiKey}`,
         Version: version,
         'Content-Type': 'application/json',
       },
@@ -56,7 +55,9 @@ export class GhlReply {
     const started = Date.now();
     let response;
     try {
-      response = await this.client.post('/conversations/messages', body);
+      response = await this.client.post('/conversations/messages', body, {
+        headers: { Authorization: `Bearer ${input.apiKey}` },
+      });
     } catch (err) {
       const axiosErr = err as AxiosError;
       const code = axiosErr.code ?? 'UNKNOWN';

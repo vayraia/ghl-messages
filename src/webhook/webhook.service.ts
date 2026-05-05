@@ -66,6 +66,7 @@ export class WebhookService {
 
     const replyChannel = resolveReplyChannel(payload);
     const contactName = resolveContactName(payload);
+    const locationId = payload.location?.id?.trim() || undefined;
 
     const result = await this.debouncer.accept({
       agentId,
@@ -73,6 +74,7 @@ export class WebhookService {
       body,
       replyChannel,
       contactName,
+      locationId,
       requestId: opts.requestId,
     });
 
