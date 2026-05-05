@@ -12,7 +12,7 @@ import { WebhookForwarder } from './webhook-forwarder';
 import { GhlContactClient } from './ghl-contact-client';
 import { GhlReply } from './ghl-reply';
 import { GroupFetcher } from './group-fetcher';
-import { InsistenceScheduler } from './insistence-scheduler';
+import { InsistenceClient } from './insistence-client';
 import { MessageDebouncer } from './message-debouncer';
 import { WebhookSecretGuard } from './guards/webhook-secret.guard';
 import { WEBHOOK_QUEUE_TOKEN, WEBHOOK_REDIS_CLIENT } from './webhook.tokens';
@@ -58,7 +58,7 @@ class RedisClientLifecycle implements OnApplicationShutdown {
     GhlContactClient,
     GhlReply,
     GroupFetcher,
-    InsistenceScheduler,
+    InsistenceClient,
     MessageDebouncer,
     WebhookSecretGuard,
   ],

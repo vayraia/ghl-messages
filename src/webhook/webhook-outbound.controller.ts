@@ -6,6 +6,7 @@ import { AppEnv } from '../config/env.validation';
 import { OutboundWebhookPayloadDto } from './dto/outbound-webhook-payload.dto';
 import { GhlContactClient } from './ghl-contact-client';
 import { GroupFetcher } from './group-fetcher';
+import { InsistenceClient } from './insistence-client';
 import { WEBHOOK_REDIS_CLIENT } from './webhook.tokens';
 
 interface OutboundResponse {
@@ -23,6 +24,7 @@ export class WebhookOutboundController {
   constructor(
     private readonly groupFetcher: GroupFetcher,
     private readonly contactClient: GhlContactClient,
+    private readonly insistenceClient: InsistenceClient,
     @Inject(WEBHOOK_REDIS_CLIENT) private readonly redis: Redis,
     config: ConfigService<AppEnv, true>,
   ) {
@@ -70,6 +72,19 @@ export class WebhookOutboundController {
     }
 
     const jobId = body.messageId ?? `${contactId}:${locationId}`;
+
+    // Human took over — cancel any pending insistences for this contact.
+    // Fire-and-forget: client already swallows non-2xx and transport errors,
+    // and we wrap in try/catch as defense-in-depth so it never aborts
+    // the disable-AI step that follows.
+    try {
+      await this.insistenceClient.cancel({ jobId, contactId });
+    } catch (err) {
+      this.logger.warn(
+        { jobId, contactId, err: (err as Error).message },
+        'Insistence cancel threw unexpectedly — swallowed',
+      );
+    }
 
     try {
       const group = await this.groupFetcher.fetch(locationId, jobId);

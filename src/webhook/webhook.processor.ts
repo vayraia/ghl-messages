@@ -7,7 +7,7 @@ import { WebhookForwarder } from './webhook-forwarder';
 import { GhlContactClient } from './ghl-contact-client';
 import { GhlReply } from './ghl-reply';
 import { GroupFetcher } from './group-fetcher';
-import { InsistenceScheduler } from './insistence-scheduler';
+import { InsistenceClient } from './insistence-client';
 import { FlushJobData, MessageDebouncer } from './message-debouncer';
 import { WEBHOOK_FLUSH_JOB, WEBHOOK_QUEUE_TOKEN } from './webhook.tokens';
 
@@ -35,7 +35,7 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
     private readonly forwarder: WebhookForwarder,
     private readonly ghl: GhlReply,
     private readonly groupFetcher: GroupFetcher,
-    private readonly insistence: InsistenceScheduler,
+    private readonly insistence: InsistenceClient,
     private readonly contactClient: GhlContactClient,
   ) {
     super();

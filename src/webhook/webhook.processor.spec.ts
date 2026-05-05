@@ -6,7 +6,7 @@ import { WebhookForwarder } from './webhook-forwarder';
 import { GhlContactClient } from './ghl-contact-client';
 import { GhlReply } from './ghl-reply';
 import { GroupFetcher } from './group-fetcher';
-import { InsistenceScheduler } from './insistence-scheduler';
+import { InsistenceClient } from './insistence-client';
 import { WEBHOOK_FLUSH_JOB } from './webhook.tokens';
 import { AppEnv } from '../config/env.validation';
 
@@ -15,7 +15,10 @@ function makeProcessor() {
   const forwarder = { forward: jest.fn() } as unknown as WebhookForwarder;
   const ghl = { send: jest.fn() } as unknown as GhlReply;
   const groupFetcher = { fetch: jest.fn() } as unknown as GroupFetcher;
-  const insistence = { schedule: jest.fn() } as unknown as InsistenceScheduler;
+  const insistence = {
+    schedule: jest.fn(),
+    cancel: jest.fn(),
+  } as unknown as InsistenceClient;
   const contactClient = {
     get: jest.fn(),
     disableAiField: jest.fn(),

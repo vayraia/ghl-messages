@@ -15,18 +15,26 @@ export interface ScheduleInput {
   insistences?: InsistenceEntry[];
 }
 
+export interface CancelInput {
+  jobId: string;
+  contactId: string;
+}
+
 /**
- * Fire-and-forget follow-up scheduler. After the chat reply is delivered we
- * map `general_settings.insistences` (already fetched by `GroupFetcher`)
- * into total-minute offsets and POST them to `JOBS_URL/insistence`.
+ * HTTP client for the JOBS_URL `/insistence` resource.
  *
- * Every failure is logged and swallowed — the BullMQ job must never fail
- * because of insistence scheduling, since the chat reply has already been
- * delivered to the user.
+ *  - `schedule()` posts follow-up offsets after a chat reply lands.
+ *  - `cancel()` deletes pending insistences for a contact when a human
+ *    takes over the conversation (outbound webhook flow).
+ *
+ * Both methods are fire-and-forget: every failure is logged and
+ * swallowed so they never bubble up and abort the surrounding flow.
+ * The chat reply / human takeover has already happened by the time
+ * either runs — failing here must not undo that.
  */
 @Injectable()
-export class InsistenceScheduler {
-  private readonly logger = new Logger(InsistenceScheduler.name);
+export class InsistenceClient {
+  private readonly logger = new Logger(InsistenceClient.name);
   private readonly client: AxiosInstance;
 
   constructor(config: ConfigService<AppEnv, true>) {
@@ -109,6 +117,54 @@ export class InsistenceScheduler {
         body: summarizeBody(response.data),
       },
       'Insistence POST returned non-2xx',
+    );
+  }
+
+  async cancel(input: CancelInput): Promise<void> {
+    const path = `/insistence/${encodeURIComponent(input.contactId)}`;
+    let response;
+    try {
+      response = await this.client.delete(path);
+    } catch (err) {
+      const axiosErr = err as AxiosError;
+      this.logger.warn(
+        {
+          jobId: input.jobId,
+          contactId: input.contactId,
+          code: axiosErr.code ?? 'UNKNOWN',
+          msg: axiosErr.message,
+        },
+        'Insistence DELETE transport error (swallowed)',
+      );
+      return;
+    }
+
+    const { status } = response;
+
+    if (status >= 200 && status < 300) {
+      this.logger.log(
+        { jobId: input.jobId, contactId: input.contactId, status },
+        'Insistences cancelled',
+      );
+      return;
+    }
+
+    if (status === 404) {
+      this.logger.log(
+        { jobId: input.jobId, contactId: input.contactId, status },
+        'Insistence DELETE returned 404 — no insistences to cancel (treated as normal)',
+      );
+      return;
+    }
+
+    this.logger.warn(
+      {
+        jobId: input.jobId,
+        contactId: input.contactId,
+        status,
+        body: summarizeBody(response.data),
+      },
+      'Insistence DELETE returned non-2xx (swallowed)',
     );
   }
 }
