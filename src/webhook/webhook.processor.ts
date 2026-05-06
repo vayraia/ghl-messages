@@ -17,7 +17,7 @@ export interface FlushResult {
   chatStatus?: number;
   ghlStatus?: number;
   totalMs: number;
-  skipped?: 'ai_disabled';
+  skipped?: 'ai_disabled' | 'no_default_agent';
 }
 
 /**
@@ -54,13 +54,13 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
       return { ok: true, drained: 0 };
     }
 
-    const { agentId, contactId } = job.data;
+    const { debounceKey, contactId, source } = job.data;
     const started = Date.now();
 
-    const items = await this.debouncer.drain(agentId, contactId);
+    const items = await this.debouncer.drain(debounceKey, contactId);
     if (items.length === 0) {
       // Could happen if a more recent flush job already drained the list.
-      this.logger.debug({ jobId: job.id, agentId, contactId }, 'Flush ran with empty list');
+      this.logger.debug({ jobId: job.id, debounceKey, contactId }, 'Flush ran with empty list');
       return { ok: true, drained: 0 };
     }
 
@@ -68,31 +68,58 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
     const last = items[items.length - 1];
     const replyChannel = last.replyChannel;
     const contactName = last.contactName;
-    const locationId = last.locationId;
+    // For inbound source the locationId is on job.data (agentId unknown at
+    // enqueue time); for workflow source the items carry it.
+    const locationId = job.data.locationId ?? last.locationId;
     const requestId = last.requestId;
     const receivedAt = items[0].receivedAt;
+
+    if (!locationId) {
+      this.logger.warn(
+        { jobId: job.id, debounceKey, contactId },
+        'Missing locationId — non-retryable',
+      );
+      throw new UnrecoverableError('locationId is required');
+    }
+
+    const group = await this.groupFetcher.fetch(locationId, String(job.id));
+
+    // Inbound flushes resolve agentId from the group's default_agent. If the
+    // group has none, drop silently — there is no agent to forward to.
+    let agentId: string;
+    if (source === 'inbound') {
+      if (!group.defaultAgent) {
+        this.logger.log(
+          { jobId: job.id, locationId, contactId },
+          'Inbound flush skipped — group has no default_agent',
+        );
+        return {
+          ok: true,
+          drained: items.length,
+          totalMs: Date.now() - started,
+          skipped: 'no_default_agent',
+        };
+      }
+      agentId = group.defaultAgent;
+    } else {
+      if (!job.data.agentId) {
+        throw new UnrecoverableError('agentId missing for workflow flush');
+      }
+      agentId = job.data.agentId;
+    }
 
     this.logger.log(
       {
         jobId: job.id,
         agentId,
         contactId,
+        source,
         attempt: job.attemptsMade + 1,
         drained: items.length,
         replyChannel,
       },
       'Flushing debounced messages',
     );
-
-    if (!locationId) {
-      this.logger.warn(
-        { jobId: job.id, agentId, contactId },
-        'Missing locationId — non-retryable',
-      );
-      throw new UnrecoverableError('locationId is required (payload.location.id)');
-    }
-
-    const group = await this.groupFetcher.fetch(locationId, String(job.id));
 
     if (group.aiFieldId) {
       const contact = await this.contactClient.get({

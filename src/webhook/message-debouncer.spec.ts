@@ -63,6 +63,8 @@ describe('MessageDebouncer', () => {
       queueMock.add.mockResolvedValue({ id: 'flush_ventas_c1_t1' });
 
       const result = await debouncer.accept({
+        debounceKey: 'ventas',
+        source: 'workflow',
         agentId: 'ventas',
         contactId: 'c1',
         body: 'hola',
@@ -89,7 +91,13 @@ describe('MessageDebouncer', () => {
       expect(queueMock.add).toHaveBeenCalledTimes(1);
       const [name, data, opts] = queueMock.add.mock.calls[0];
       expect(name).toBe(WEBHOOK_FLUSH_JOB);
-      expect(data).toEqual({ agentId: 'ventas', contactId: 'c1' });
+      expect(data).toEqual({
+        debounceKey: 'ventas',
+        contactId: 'c1',
+        source: 'workflow',
+        agentId: 'ventas',
+        locationId: 'loc_abc',
+      });
       expect(opts.delay).toBe(10_000);
       expect(opts.attempts).toBe(3);
       expect(opts.backoff).toEqual({ type: 'exponential', delay: 1000 });
@@ -99,6 +107,36 @@ describe('MessageDebouncer', () => {
       expect(redisMock.set).toHaveBeenCalledWith('debounce:flush:ventas:c1', opts.jobId, 'EX', 300);
 
       expect(result.pendingCount).toBe(1);
+    });
+
+    it('sanitizes the colon in inbound debounceKey when building the BullMQ jobId', async () => {
+      txExec.mockResolvedValue([
+        [null, 1],
+        [null, 1],
+      ]);
+      redisMock.get.mockResolvedValue(null);
+      queueMock.add.mockResolvedValue({ id: 'flush_loc_LOC123_c1_t1' });
+
+      await debouncer.accept({
+        debounceKey: 'loc:LOC123',
+        source: 'inbound',
+        contactId: 'c1',
+        locationId: 'LOC123',
+        body: 'hola',
+        replyChannel: 'WhatsApp',
+        requestId: 'msg_1',
+      });
+
+      const [, data, opts] = queueMock.add.mock.calls[0];
+      expect(data).toEqual({
+        debounceKey: 'loc:LOC123',
+        contactId: 'c1',
+        source: 'inbound',
+        agentId: undefined,
+        locationId: 'LOC123',
+      });
+      expect(opts.jobId).toMatch(/^flush_loc_LOC123_c1_\d+-[0-9a-f]+$/);
+      expect(opts.jobId).not.toContain(':');
     });
 
     it('removes the previously-scheduled flush job before adding a new one', async () => {
@@ -112,6 +150,8 @@ describe('MessageDebouncer', () => {
       queueMock.add.mockResolvedValue({ id: 'flush_ventas_c1_newer' });
 
       await debouncer.accept({
+        debounceKey: 'ventas',
+        source: 'workflow',
         agentId: 'ventas',
         contactId: 'c1',
         body: 'segundo',
@@ -136,6 +176,8 @@ describe('MessageDebouncer', () => {
 
       await expect(
         debouncer.accept({
+          debounceKey: 'ventas',
+          source: 'workflow',
           agentId: 'ventas',
           contactId: 'c1',
           body: 'msg',

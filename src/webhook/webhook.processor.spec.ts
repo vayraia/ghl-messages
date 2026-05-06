@@ -1,7 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { Job, UnrecoverableError } from 'bullmq';
 import { WebhookProcessor } from './webhook.processor';
-import { MessageDebouncer, DebouncedMessage } from './message-debouncer';
+import { MessageDebouncer, DebouncedMessage, FlushJobData } from './message-debouncer';
 import { WebhookForwarder } from './webhook-forwarder';
 import { GhlContactClient } from './ghl-contact-client';
 import { GhlReply } from './ghl-reply';
@@ -40,13 +40,22 @@ function makeProcessor() {
   return { processor, debouncer, forwarder, ghl, groupFetcher, insistence, contactClient };
 }
 
-function makeJob(overrides: Partial<{ id: string; name: string; attemptsMade: number }> = {}) {
+function makeJob(
+  overrides: Partial<{ id: string; name: string; attemptsMade: number; data: FlushJobData }> = {},
+) {
   return {
     id: overrides.id ?? 'job-1',
     name: overrides.name ?? WEBHOOK_FLUSH_JOB,
     attemptsMade: overrides.attemptsMade ?? 0,
-    data: { agentId: 'ventas', contactId: 'c1' },
-  } as unknown as Job<{ agentId: string; contactId: string }, unknown, string>;
+    data:
+      overrides.data ??
+      ({
+        debounceKey: 'ventas',
+        contactId: 'c1',
+        source: 'workflow',
+        agentId: 'ventas',
+      } as FlushJobData),
+  } as unknown as Job<FlushJobData, unknown, string>;
 }
 
 const sampleItems: DebouncedMessage[] = [
@@ -270,6 +279,79 @@ describe('WebhookProcessor.process', () => {
 
       await expect(p.processor.process(makeJob())).rejects.toThrow(/503/);
       expect(p.forwarder.forward).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('inbound source', () => {
+    function inboundJob(): Job<FlushJobData, unknown, string> {
+      return makeJob({
+        data: {
+          debounceKey: 'loc:LOC123',
+          contactId: 'c1',
+          source: 'inbound',
+          locationId: 'LOC123',
+        },
+      });
+    }
+
+    const inboundItems: DebouncedMessage[] = [
+      {
+        body: 'hola',
+        replyChannel: 'WhatsApp',
+        locationId: undefined,
+        requestId: 'msg_1',
+        receivedAt: '2026-05-06T19:50:39.476Z',
+      },
+    ];
+
+    it('skips with no_default_agent when the group has no default_agent', async () => {
+      const p = makeProcessor();
+      (p.debouncer.drain as jest.Mock).mockResolvedValue(inboundItems);
+      (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({ apiKey: 'k' });
+
+      const result = await p.processor.process(inboundJob());
+
+      expect(p.groupFetcher.fetch).toHaveBeenCalledWith('LOC123', 'job-1');
+      expect(p.forwarder.forward).not.toHaveBeenCalled();
+      expect(p.ghl.send).not.toHaveBeenCalled();
+      expect(p.insistence.schedule).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ ok: true, drained: 1, skipped: 'no_default_agent' });
+    });
+
+    it('uses group.defaultAgent as agentId and runs the full flow', async () => {
+      const p = makeProcessor();
+      (p.debouncer.drain as jest.Mock).mockResolvedValue(inboundItems);
+      (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({
+        apiKey: 'pit-k',
+        defaultAgent: 'agent_default',
+        insistences: [{ hours: 1 }],
+      });
+      (p.forwarder.forward as jest.Mock).mockResolvedValue({ message: 'reply', durationMs: 1 });
+      (p.ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 1 });
+      (p.insistence.schedule as jest.Mock).mockResolvedValue(undefined);
+
+      const result = await p.processor.process(inboundJob());
+
+      expect(p.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: 'agent_default', contactId: 'c1', body: 'hola' }),
+      );
+      expect(p.ghl.send).toHaveBeenCalledWith({
+        jobId: 'job-1',
+        contactId: 'c1',
+        message: 'reply',
+        type: 'WhatsApp',
+        apiKey: 'pit-k',
+      });
+      expect(p.insistence.schedule).toHaveBeenCalledWith(
+        expect.objectContaining({
+          locationId: 'LOC123',
+          contactId: 'c1',
+          agentId: 'agent_default',
+          replyChannel: 'WhatsApp',
+          apiKey: 'pit-k',
+        }),
+      );
+      expect(result).toMatchObject({ ok: true, drained: 1, ghlStatus: 200 });
     });
   });
 

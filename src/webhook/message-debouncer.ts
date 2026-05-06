@@ -8,6 +8,8 @@ import { AppEnv } from '../config/env.validation';
 import { ReplyChannel } from './channel-resolver';
 import { WEBHOOK_FLUSH_JOB, WEBHOOK_QUEUE_TOKEN, WEBHOOK_REDIS_CLIENT } from './webhook.tokens';
 
+export type FlushSource = 'workflow' | 'inbound';
+
 /** Each queued message fragment stored as JSON in the Redis list. */
 export interface DebouncedMessage {
   body: string;
@@ -18,10 +20,27 @@ export interface DebouncedMessage {
   receivedAt: string;
 }
 
-/** Job payload for the flush worker. */
+/**
+ * Job payload for the flush worker.
+ *
+ * `debounceKey` is the logical key the messages were grouped under:
+ *  - workflow source: the `agentId` (kept identical to legacy behavior).
+ *  - inbound source: `loc:${locationId}` (agentId is not yet known at
+ *    enqueue time and is resolved by the processor from the group's
+ *    `general_settings.default_agent`).
+ *
+ * `agentId` is only set for the workflow source (where the controller
+ * already knows it). For the inbound source the processor derives it.
+ *
+ * `locationId` is only set for the inbound source (so the processor can
+ * fetch the group without inspecting the items).
+ */
 export interface FlushJobData {
-  agentId: string;
+  debounceKey: string;
   contactId: string;
+  source: FlushSource;
+  agentId?: string;
+  locationId?: string;
 }
 
 export interface AcceptResult {
@@ -32,7 +51,7 @@ export interface AcceptResult {
 const LIST_TTL_SECONDS = 5 * 60;
 
 /**
- * Coalesces multiple inbound messages from the same (agent, contact) pair
+ * Coalesces multiple inbound messages from the same logical (debounceKey, contact) pair
  * into a single downstream invocation.
  *
  * - `accept` RPUSHes the fragment into a Redis list and schedules a fresh
@@ -64,16 +83,18 @@ export class MessageDebouncer {
   }
 
   async accept(input: {
-    agentId: string;
+    debounceKey: string;
     contactId: string;
+    source: FlushSource;
+    agentId?: string;
+    locationId?: string;
     body: string;
     replyChannel: ReplyChannel;
     contactName?: string;
-    locationId?: string;
     requestId: string | undefined;
   }): Promise<AcceptResult> {
-    const listKey = listKeyFor(input.agentId, input.contactId);
-    const flushKey = flushKeyFor(input.agentId, input.contactId);
+    const listKey = listKeyFor(input.debounceKey, input.contactId);
+    const flushKey = flushKeyFor(input.debounceKey, input.contactId);
 
     const item: DebouncedMessage = {
       body: input.body,
@@ -111,12 +132,20 @@ export class MessageDebouncer {
       }
     }
 
-    // BullMQ rejects custom job IDs containing ':', so we use '_' as the separator.
-    const newJobId = `flush_${input.agentId}_${input.contactId}_${Date.now()}-${randomUUID().slice(0, 8)}`;
+    // BullMQ rejects custom job IDs containing ':', so we sanitize any colon
+    // that the inbound `loc:<id>` debounceKey carries.
+    const safeDebounceKey = input.debounceKey.replace(/:/g, '_');
+    const newJobId = `flush_${safeDebounceKey}_${input.contactId}_${Date.now()}-${randomUUID().slice(0, 8)}`;
 
     await this.queue.add(
       WEBHOOK_FLUSH_JOB,
-      { agentId: input.agentId, contactId: input.contactId },
+      {
+        debounceKey: input.debounceKey,
+        contactId: input.contactId,
+        source: input.source,
+        agentId: input.agentId,
+        locationId: input.locationId,
+      },
       {
         jobId: newJobId,
         delay: this.debounceMs,
@@ -132,9 +161,9 @@ export class MessageDebouncer {
     return { jobId: newJobId, pendingCount };
   }
 
-  async drain(agentId: string, contactId: string): Promise<DebouncedMessage[]> {
-    const listKey = listKeyFor(agentId, contactId);
-    const flushKey = flushKeyFor(agentId, contactId);
+  async drain(debounceKey: string, contactId: string): Promise<DebouncedMessage[]> {
+    const listKey = listKeyFor(debounceKey, contactId);
+    const flushKey = flushKeyFor(debounceKey, contactId);
 
     const tx = this.redis.multi();
     tx.lrange(listKey, 0, -1);
@@ -156,10 +185,10 @@ export class MessageDebouncer {
   }
 }
 
-function listKeyFor(agentId: string, contactId: string): string {
-  return `debounce:msgs:${agentId}:${contactId}`;
+function listKeyFor(debounceKey: string, contactId: string): string {
+  return `debounce:msgs:${debounceKey}:${contactId}`;
 }
 
-function flushKeyFor(agentId: string, contactId: string): string {
-  return `debounce:flush:${agentId}:${contactId}`;
+function flushKeyFor(debounceKey: string, contactId: string): string {
+  return `debounce:flush:${debounceKey}:${contactId}`;
 }

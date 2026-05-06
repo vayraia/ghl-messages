@@ -1,3 +1,4 @@
+import { InboundMessagePayloadDto } from './dto/inbound-message-payload.dto';
 import { WebhookPayloadDto } from './dto/webhook-payload.dto';
 
 export type ReplyChannel = 'WhatsApp' | 'IG' | 'FB';
@@ -53,6 +54,26 @@ export function resolveReplyChannel(payload: WebhookPayloadDto): ReplyChannel {
 
   const attrMatch = matchString(payload.contact?.attributionSource?.medium);
   if (attrMatch) return attrMatch;
+
+  return 'WhatsApp';
+}
+
+/**
+ * Channel resolver for the native GHL `InboundMessage` webhook payload.
+ *
+ * Priority:
+ *  1. `messageType` string (e.g. "WhatsApp", "Instagram", "Facebook").
+ *  2. `messageTypeId` numeric — same enum mapping used for the workflow path.
+ *  3. Default → WhatsApp.
+ */
+export function resolveInboundChannel(payload: InboundMessagePayloadDto): ReplyChannel {
+  const stringMatch = matchString(payload.messageType);
+  if (stringMatch) return stringMatch;
+
+  if (typeof payload.messageTypeId === 'number') {
+    const numericMatch = NUMERIC_TYPE_TO_CHANNEL[payload.messageTypeId];
+    if (numericMatch) return numericMatch;
+  }
 
   return 'WhatsApp';
 }

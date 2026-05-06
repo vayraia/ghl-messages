@@ -50,6 +50,8 @@ describe('WebhookService', () => {
     const result = await service.ingest(basePayload(), { requestId: 'req-1' });
 
     expect(debouncerMock.accept).toHaveBeenCalledWith({
+      debounceKey: 'ventas',
+      source: 'workflow',
       agentId: 'ventas',
       contactId: 'c-1',
       body: 'hola',

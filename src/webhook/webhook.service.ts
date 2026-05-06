@@ -69,6 +69,8 @@ export class WebhookService {
     const locationId = payload.location?.id?.trim() || undefined;
 
     const result = await this.debouncer.accept({
+      debounceKey: agentId,
+      source: 'workflow',
       agentId,
       contactId: payload.contact_id,
       body,

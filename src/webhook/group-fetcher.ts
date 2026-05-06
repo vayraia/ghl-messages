@@ -18,6 +18,7 @@ export interface GroupSettings {
   apiKey: string;
   insistences?: InsistenceEntry[];
   aiFieldId?: AiFieldRef;
+  defaultAgent?: string;
 }
 
 interface GroupResponse {
@@ -25,6 +26,7 @@ interface GroupResponse {
   general_settings?: {
     insistences?: InsistenceEntry[];
     ai_field_id?: { id?: unknown; key?: unknown };
+    default_agent?: unknown;
     [key: string]: unknown;
   };
   [key: string]: unknown;
@@ -101,6 +103,7 @@ export class GroupFetcher {
         apiKey,
         insistences: body.general_settings?.insistences,
         aiFieldId: parseAiFieldId(body.general_settings?.ai_field_id),
+        defaultAgent: parseDefaultAgent(body.general_settings?.default_agent),
       };
     }
 
@@ -120,6 +123,12 @@ export class GroupFetcher {
     );
     throw new Error(`Group fetch returned ${status}: ${summary}`);
   }
+}
+
+function parseDefaultAgent(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function parseAiFieldId(raw: unknown): AiFieldRef | undefined {
