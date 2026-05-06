@@ -65,6 +65,7 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
     }
 
     const concatenated = items.map((i) => i.body).join('\n');
+    const attachments = items.flatMap((i) => i.attachments ?? []);
     const last = items[items.length - 1];
     const replyChannel = last.replyChannel;
     const contactName = last.contactName;
@@ -154,6 +155,7 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
       contactId,
       body: concatenated,
       contactName,
+      attachments: attachments.length > 0 ? attachments : undefined,
       receivedAt,
       requestId,
     });

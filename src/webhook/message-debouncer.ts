@@ -16,6 +16,7 @@ export interface DebouncedMessage {
   replyChannel: ReplyChannel;
   contactName?: string;
   locationId?: string;
+  attachments?: string[];
   requestId: string | undefined;
   receivedAt: string;
 }
@@ -91,6 +92,7 @@ export class MessageDebouncer {
     body: string;
     replyChannel: ReplyChannel;
     contactName?: string;
+    attachments?: string[];
     requestId: string | undefined;
   }): Promise<AcceptResult> {
     const listKey = listKeyFor(input.debounceKey, input.contactId);
@@ -101,6 +103,7 @@ export class MessageDebouncer {
       replyChannel: input.replyChannel,
       contactName: input.contactName,
       locationId: input.locationId,
+      attachments: input.attachments && input.attachments.length > 0 ? input.attachments : undefined,
       requestId: input.requestId,
       receivedAt: new Date().toISOString(),
     };

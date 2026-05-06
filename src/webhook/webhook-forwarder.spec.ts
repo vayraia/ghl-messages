@@ -92,6 +92,33 @@ describe('WebhookForwarder', () => {
     });
   });
 
+  it('includes attachments in message when provided', async () => {
+    const { forwarder, post } = makeForwarder();
+    post.mockResolvedValue({ status: 200, data: { message: 'ok' } });
+
+    await forwarder.forward({
+      ...baseReq,
+      attachments: ['https://files.gohighlevel/a.jpg', 'https://files.gohighlevel/b.pdf'],
+    });
+
+    const [, body] = post.mock.calls[0];
+    expect(body.message).toEqual({
+      body: 'hola\nbuen día',
+      attachments: ['https://files.gohighlevel/a.jpg', 'https://files.gohighlevel/b.pdf'],
+    });
+  });
+
+  it('omits attachments key when array is empty', async () => {
+    const { forwarder, post } = makeForwarder();
+    post.mockResolvedValue({ status: 200, data: { message: 'ok' } });
+
+    await forwarder.forward({ ...baseReq, attachments: [] });
+
+    const [, body] = post.mock.calls[0];
+    expect(body.message).toEqual({ body: 'hola\nbuen día' });
+    expect(body.message).not.toHaveProperty('attachments');
+  });
+
   it('keeps contact_data empty when contactName is absent', async () => {
     const { forwarder, post } = makeForwarder();
     post.mockResolvedValue({ status: 200, data: { message: 'ok' } });

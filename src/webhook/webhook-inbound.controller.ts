@@ -73,6 +73,9 @@ export class WebhookInboundController {
     }
 
     const replyChannel = resolveInboundChannel(body);
+    const attachments = Array.isArray(body.attachments)
+      ? body.attachments.filter((a) => typeof a === 'string' && a.length > 0)
+      : undefined;
 
     const result = await this.debouncer.accept({
       debounceKey: `loc:${locationId}`,
@@ -81,6 +84,7 @@ export class WebhookInboundController {
       locationId,
       body: text,
       replyChannel,
+      attachments,
       requestId: body.messageId,
     });
 

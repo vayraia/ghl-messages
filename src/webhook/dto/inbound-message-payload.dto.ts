@@ -1,4 +1,13 @@
-import { Allow, IsNumber, IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  Allow,
+  ArrayMaxSize,
+  IsArray,
+  IsNumber,
+  IsObject,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 
 /**
  * Native GHL `InboundMessage` webhook payload (the one delivered straight from
@@ -72,6 +81,13 @@ export class InboundMessagePayloadDto {
   @IsString()
   @MaxLength(64)
   userId?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @MaxLength(2048, { each: true })
+  attachments?: string[];
 
   @IsOptional()
   @IsObject()

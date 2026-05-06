@@ -11,6 +11,7 @@ export interface ChatRequest {
   contactId: string;
   body: string;
   contactName?: string;
+  attachments?: string[];
   receivedAt: string;
   requestId: string | undefined;
 }
@@ -58,11 +59,16 @@ export class WebhookForwarder {
       headers[REQUEST_ID_HEADER] = req.requestId;
     }
 
+    const message: { body: string; attachments?: string[] } = { body: req.body };
+    if (req.attachments && req.attachments.length > 0) {
+      message.attachments = req.attachments;
+    }
+
     const body = {
       agent_id: req.agentId,
       contact_id: req.contactId,
       contact_data: req.contactName ? { name: req.contactName } : {},
-      message: { body: req.body },
+      message,
     };
 
     const started = Date.now();
