@@ -51,11 +51,18 @@ export class WebhookInboundController {
 
     const locationId = body.locationId?.trim();
     const contactId = body.contactId?.trim();
-    const text = body.body?.trim();
+    const text = body.body?.trim() ?? '';
     if (!locationId || !contactId) {
       return { ok: true, skipped: 'missing_ids' };
     }
-    if (!text) {
+
+    const attachments = Array.isArray(body.attachments)
+      ? body.attachments.filter((a) => typeof a === 'string' && a.length > 0)
+      : [];
+
+    // Voice notes / image-only / sticker messages arrive with empty body and
+    // the real content in attachments. Drop only if BOTH are empty.
+    if (!text && attachments.length === 0) {
       return { ok: true, skipped: 'empty_body' };
     }
 
@@ -73,9 +80,6 @@ export class WebhookInboundController {
     }
 
     const replyChannel = resolveInboundChannel(body);
-    const attachments = Array.isArray(body.attachments)
-      ? body.attachments.filter((a) => typeof a === 'string' && a.length > 0)
-      : undefined;
 
     const result = await this.debouncer.accept({
       debounceKey: `loc:${locationId}`,
@@ -84,7 +88,7 @@ export class WebhookInboundController {
       locationId,
       body: text,
       replyChannel,
-      attachments,
+      attachments: attachments.length > 0 ? attachments : undefined,
       requestId: body.messageId,
     });
 

@@ -3,7 +3,6 @@ import {
   ArrayMaxSize,
   IsArray,
   IsNumber,
-  IsObject,
   IsOptional,
   IsString,
   MaxLength,
@@ -88,14 +87,6 @@ export class InboundMessagePayloadDto {
   @IsString({ each: true })
   @MaxLength(2048, { each: true })
   attachments?: string[];
-
-  @IsOptional()
-  @IsObject()
-  from?: Record<string, unknown>;
-
-  @IsOptional()
-  @IsObject()
-  to?: Record<string, unknown>;
 
   @Allow()
   timestamp?: string;
