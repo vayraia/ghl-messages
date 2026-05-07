@@ -49,6 +49,13 @@ export class WebhookInboundController {
       return { ok: true, skipped: 'filtered' };
     }
 
+    // Public comments (TikTok / FB / IG) share the inbound webhook with DMs
+    // but cannot reliably be answered through /conversations/messages, so
+    // drop them before they hit the AI pipeline.
+    if (isCommentMessage(body)) {
+      return { ok: true, skipped: 'comment' };
+    }
+
     const locationId = body.locationId?.trim();
     const contactId = body.contactId?.trim();
     const text = body.body?.trim() ?? '';
@@ -102,4 +109,12 @@ export class WebhookInboundController {
 
 function inboundIdempotencyKey(messageId: string): string {
   return `webhook:inbound:idem:${messageId}`;
+}
+
+function isCommentMessage(body: InboundMessagePayloadDto): boolean {
+  const typeString = body.messageTypeString?.toLowerCase() ?? '';
+  if (typeString.endsWith('_comment')) return true;
+  const type = body.messageType?.toLowerCase() ?? '';
+  if (type.includes('comment')) return true;
+  return false;
 }
