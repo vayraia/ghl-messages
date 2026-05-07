@@ -62,6 +62,8 @@ describe('GroupFetcher', () => {
         { hours: 0, minutes: 10 },
         { hours: 1, minutes: 0 },
       ],
+      aiFieldId: undefined,
+      nonBlockingUsers: undefined,
     });
   });
 
@@ -80,7 +82,12 @@ describe('GroupFetcher', () => {
 
     const result = await fetcher.fetch('loc_abc', 'job-1');
 
-    expect(result).toEqual({ apiKey: 'sk', insistences: undefined, aiFieldId: undefined });
+    expect(result).toEqual({
+      apiKey: 'sk',
+      insistences: undefined,
+      aiFieldId: undefined,
+      nonBlockingUsers: undefined,
+    });
   });
 
   it('exposes aiFieldId when general_settings.ai_field_id has id and key', async () => {
@@ -128,6 +135,124 @@ describe('GroupFetcher', () => {
     const result = await fetcher.fetch('loc_abc', 'job-1');
 
     expect(result.aiFieldId).toBeUndefined();
+  });
+
+  it('parses non_blocking_users when entries have id and name', async () => {
+    const { fetcher, get } = makeFetcher();
+    get.mockResolvedValue({
+      status: 200,
+      data: {
+        api_key: 'sk',
+        general_settings: {
+          non_blocking_users: [
+            { id: 'u_admin', name: 'Admin' },
+            { id: 'u_owner', name: 'Owner' },
+          ],
+        },
+      },
+    });
+
+    const result = await fetcher.fetch('loc_abc', 'job-1');
+
+    expect(result.nonBlockingUsers).toEqual([
+      { id: 'u_admin', name: 'Admin' },
+      { id: 'u_owner', name: 'Owner' },
+    ]);
+  });
+
+  it('returns nonBlockingUsers=undefined when the field is missing', async () => {
+    const { fetcher, get } = makeFetcher();
+    get.mockResolvedValue({
+      status: 200,
+      data: { api_key: 'sk', general_settings: {} },
+    });
+
+    const result = await fetcher.fetch('loc_abc', 'job-1');
+
+    expect(result.nonBlockingUsers).toBeUndefined();
+  });
+
+  it('returns nonBlockingUsers=undefined for an empty array', async () => {
+    const { fetcher, get } = makeFetcher();
+    get.mockResolvedValue({
+      status: 200,
+      data: {
+        api_key: 'sk',
+        general_settings: { non_blocking_users: [] },
+      },
+    });
+
+    const result = await fetcher.fetch('loc_abc', 'job-1');
+
+    expect(result.nonBlockingUsers).toBeUndefined();
+  });
+
+  it('returns nonBlockingUsers=undefined when the field is not an array', async () => {
+    const { fetcher, get } = makeFetcher();
+    get.mockResolvedValue({
+      status: 200,
+      data: {
+        api_key: 'sk',
+        general_settings: { non_blocking_users: { id: 'u' } },
+      },
+    });
+
+    const result = await fetcher.fetch('loc_abc', 'job-1');
+
+    expect(result.nonBlockingUsers).toBeUndefined();
+  });
+
+  it('drops non_blocking_users entries with missing or blank id', async () => {
+    const { fetcher, get } = makeFetcher();
+    get.mockResolvedValue({
+      status: 200,
+      data: {
+        api_key: 'sk',
+        general_settings: {
+          non_blocking_users: [
+            { id: 'u_keep', name: 'Keep' },
+            { id: '   ', name: 'Blank' },
+            { name: 'No ID' },
+            { id: 42, name: 'Wrong type' },
+            null,
+            'string-entry',
+            { id: 'u_keep2', name: 'Also Keep' },
+          ],
+        },
+      },
+    });
+
+    const result = await fetcher.fetch('loc_abc', 'job-1');
+
+    expect(result.nonBlockingUsers).toEqual([
+      { id: 'u_keep', name: 'Keep' },
+      { id: 'u_keep2', name: 'Also Keep' },
+    ]);
+  });
+
+  it('normalizes missing or non-string name to empty string when id is valid', async () => {
+    const { fetcher, get } = makeFetcher();
+    get.mockResolvedValue({
+      status: 200,
+      data: {
+        api_key: 'sk',
+        general_settings: {
+          non_blocking_users: [
+            { id: 'u_1' },
+            { id: 'u_2', name: 99 },
+            { id: 'u_3', name: '  Trimmed  ' },
+          ],
+        },
+      },
+    });
+
+    const result = await fetcher.fetch('loc_abc', 'job-1');
+
+    expect(result.nonBlockingUsers).toEqual([
+      { id: 'u_1', name: '' },
+      { id: 'u_2', name: '' },
+      { id: 'u_3', name: 'Trimmed' },
+    ]);
   });
 
   it('throws UnrecoverableError when 2xx response has no api_key', async () => {

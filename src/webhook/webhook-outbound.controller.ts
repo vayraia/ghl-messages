@@ -13,7 +13,7 @@ interface OutboundResponse {
   ok: true;
   updated?: boolean;
   deduplicated?: boolean;
-  skipped?: string;
+  skipped?: 'no_ai_field_id' | 'non_blocking_user';
 }
 
 @Controller({ path: 'webhook', version: ['1'] })
@@ -73,6 +73,31 @@ export class WebhookOutboundController {
 
     const jobId = body.messageId ?? `${contactId}:${locationId}`;
 
+    let group;
+    try {
+      group = await this.groupFetcher.fetch(locationId, jobId);
+    } catch (err) {
+      if (err instanceof UnrecoverableError) {
+        this.logger.warn(
+          { jobId, contactId, err: err.message },
+          'Group fetch failed permanently — swallowed',
+        );
+        return { ok: true };
+      }
+      throw err;
+    }
+
+    // Non-blocking users: this GHL user replied manually but the group config
+    // says they should NOT stop the AI. Skip both insistence cancel and AI
+    // field disable so the AI keeps running.
+    if (group.nonBlockingUsers?.some((u) => u.id === body.userId)) {
+      this.logger.debug(
+        { jobId, contactId, userId: body.userId },
+        'userId in non_blocking_users — skipping cancel + disable',
+      );
+      return { ok: true, skipped: 'non_blocking_user' };
+    }
+
     // Human took over — cancel any pending insistences for this contact.
     // Fire-and-forget: client already swallows non-2xx and transport errors,
     // and we wrap in try/catch as defense-in-depth so it never aborts
@@ -86,16 +111,15 @@ export class WebhookOutboundController {
       );
     }
 
-    try {
-      const group = await this.groupFetcher.fetch(locationId, jobId);
-      if (!group.aiFieldId) {
-        this.logger.debug(
-          { jobId, locationId, contactId },
-          'Group has no ai_field_id configured — skipping',
-        );
-        return { ok: true, skipped: 'no_ai_field_id' };
-      }
+    if (!group.aiFieldId) {
+      this.logger.debug(
+        { jobId, locationId, contactId },
+        'Group has no ai_field_id configured — skipping',
+      );
+      return { ok: true, skipped: 'no_ai_field_id' };
+    }
 
+    try {
       await this.contactClient.disableAiField({
         jobId,
         contactId,

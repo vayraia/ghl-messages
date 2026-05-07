@@ -156,12 +156,14 @@ describe('WebhookOutboundController', () => {
   });
 
   it('swallows UnrecoverableError from groupFetcher and returns 200', async () => {
-    const { controller, groupFetcher } = makeController();
+    const { controller, groupFetcher, insistenceClient, updater } = makeController();
     groupFetcher.fetch.mockRejectedValue(new UnrecoverableError('bad config'));
 
     const r = await controller.outbound(payload());
 
     expect(r).toEqual({ ok: true });
+    expect(insistenceClient.cancel).not.toHaveBeenCalled();
+    expect(updater.disableAiField).not.toHaveBeenCalled();
   });
 
   it('swallows UnrecoverableError from contactUpdater and returns 200', async () => {
@@ -185,7 +187,7 @@ describe('WebhookOutboundController', () => {
   });
 
   describe('insistence cancellation', () => {
-    it('cancels insistences before fetching the group on a human takeover', async () => {
+    it('fetches the group before cancelling insistences on a human takeover', async () => {
       const { controller, groupFetcher, updater, insistenceClient } = makeController();
       groupFetcher.fetch.mockResolvedValue({
         apiKey: 'sk',
@@ -201,7 +203,7 @@ describe('WebhookOutboundController', () => {
       });
       const cancelOrder = (insistenceClient.cancel as jest.Mock).mock.invocationCallOrder[0];
       const fetchOrder = (groupFetcher.fetch as jest.Mock).mock.invocationCallOrder[0];
-      expect(cancelOrder).toBeLessThan(fetchOrder);
+      expect(fetchOrder).toBeLessThan(cancelOrder);
     });
 
     it('continues with disable-AI when cancel rejects unexpectedly', async () => {
@@ -242,6 +244,57 @@ describe('WebhookOutboundController', () => {
         jobId: 'c_1:loc_1',
         contactId: 'c_1',
       });
+    });
+  });
+
+  describe('non_blocking_users', () => {
+    it('skips cancel + disable when userId matches a non_blocking_users entry', async () => {
+      const { controller, groupFetcher, updater, insistenceClient } = makeController();
+      groupFetcher.fetch.mockResolvedValue({
+        apiKey: 'sk',
+        aiFieldId: { id: 'cf', key: 'ai' },
+        nonBlockingUsers: [
+          { id: 'u_admin', name: 'Admin' },
+          { id: 'u_1', name: 'Bot User' },
+        ],
+      } satisfies GroupSettings);
+
+      const r = await controller.outbound(payload({ userId: 'u_1' }));
+
+      expect(r).toEqual({ ok: true, skipped: 'non_blocking_user' });
+      expect(insistenceClient.cancel).not.toHaveBeenCalled();
+      expect(updater.disableAiField).not.toHaveBeenCalled();
+    });
+
+    it('proceeds with cancel + disable when userId is not in non_blocking_users', async () => {
+      const { controller, groupFetcher, updater, insistenceClient } = makeController();
+      groupFetcher.fetch.mockResolvedValue({
+        apiKey: 'sk',
+        aiFieldId: { id: 'cf', key: 'ai' },
+        nonBlockingUsers: [{ id: 'u_admin', name: 'Admin' }],
+      } satisfies GroupSettings);
+      updater.disableAiField.mockResolvedValue({ status: 200, durationMs: 1 });
+
+      const r = await controller.outbound(payload({ userId: 'u_human' }));
+
+      expect(r).toEqual({ ok: true, updated: true });
+      expect(insistenceClient.cancel).toHaveBeenCalled();
+      expect(updater.disableAiField).toHaveBeenCalled();
+    });
+
+    it('proceeds normally when nonBlockingUsers is undefined', async () => {
+      const { controller, groupFetcher, updater, insistenceClient } = makeController();
+      groupFetcher.fetch.mockResolvedValue({
+        apiKey: 'sk',
+        aiFieldId: { id: 'cf', key: 'ai' },
+      } satisfies GroupSettings);
+      updater.disableAiField.mockResolvedValue({ status: 200, durationMs: 1 });
+
+      const r = await controller.outbound(payload());
+
+      expect(r).toEqual({ ok: true, updated: true });
+      expect(insistenceClient.cancel).toHaveBeenCalled();
+      expect(updater.disableAiField).toHaveBeenCalled();
     });
   });
 });

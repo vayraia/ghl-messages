@@ -14,11 +14,17 @@ export interface AiFieldRef {
   key: string;
 }
 
+export interface NonBlockingUser {
+  id: string;
+  name: string;
+}
+
 export interface GroupSettings {
   apiKey: string;
   insistences?: InsistenceEntry[];
   aiFieldId?: AiFieldRef;
   defaultAgent?: string;
+  nonBlockingUsers?: NonBlockingUser[];
 }
 
 interface GroupResponse {
@@ -27,6 +33,7 @@ interface GroupResponse {
     insistences?: InsistenceEntry[];
     ai_field_id?: { id?: unknown; key?: unknown };
     default_agent?: unknown;
+    non_blocking_users?: unknown;
     [key: string]: unknown;
   };
   [key: string]: unknown;
@@ -104,6 +111,7 @@ export class GroupFetcher {
         insistences: body.general_settings?.insistences,
         aiFieldId: parseAiFieldId(body.general_settings?.ai_field_id),
         defaultAgent: parseDefaultAgent(body.general_settings?.default_agent),
+        nonBlockingUsers: parseNonBlockingUsers(body.general_settings?.non_blocking_users),
       };
     }
 
@@ -129,6 +137,20 @@ function parseDefaultAgent(raw: unknown): string | undefined {
   if (typeof raw !== 'string') return undefined;
   const trimmed = raw.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function parseNonBlockingUsers(raw: unknown): NonBlockingUser[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const users: NonBlockingUser[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const r = entry as { id?: unknown; name?: unknown };
+    const id = typeof r.id === 'string' ? r.id.trim() : '';
+    if (!id) continue;
+    const name = typeof r.name === 'string' ? r.name.trim() : '';
+    users.push({ id, name });
+  }
+  return users.length > 0 ? users : undefined;
 }
 
 function parseAiFieldId(raw: unknown): AiFieldRef | undefined {
