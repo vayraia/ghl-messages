@@ -1,18 +1,32 @@
 import { InboundMessagePayloadDto } from './dto/inbound-message-payload.dto';
 import { WebhookPayloadDto } from './dto/webhook-payload.dto';
 
-export type ReplyChannel = 'WhatsApp' | 'IG' | 'FB';
+/**
+ * Reply channel — must be one of the values accepted by GHL's
+ * `POST /conversations/messages` `type` enum (see SendMessageBodyDto in
+ * apps/conversations.json). Whichever value we pick here is forwarded
+ * verbatim to GHL by `GhlReply.send`.
+ */
+export type ReplyChannel =
+  | 'SMS'
+  | 'RCS'
+  | 'Email'
+  | 'WhatsApp'
+  | 'IG'
+  | 'FB'
+  | 'Custom'
+  | 'Live_Chat'
+  | 'TIKTOK';
 
 /**
  * GHL Workflow webhooks send `message.type` as a numeric code (positional in
- * the public Conversations OpenAPI enum, 1-indexed). We only map the codes
- * that correspond to channels we can reply on (WhatsApp / IG / FB). Codes
- * for SMS, Email, Call, etc. are intentionally absent — they fall through
- * to the next resolution step.
+ * the public Conversations `lastMessageType` enum, 1-indexed). We map only
+ * the codes empirically observed in production payloads. Other inbound types
+ * (SMS, Email, Call, Review, etc.) fall through to the next resolution step
+ * since GHL does not document this mapping and reordering would silently
+ * break it.
  *
- * Reference: https://github.com/GoHighLevel/highlevel-api-docs (apps/conversations.json,
- * `lastMessageType` enum). The numeric mapping is derived from enum position;
- * GHL does not document it explicitly so this may break if they reorder.
+ * Reference: https://github.com/GoHighLevel/highlevel-api-docs (apps/conversations.json).
  */
 const NUMERIC_TYPE_TO_CHANNEL: Record<number, ReplyChannel> = {
   11: 'FB',
@@ -20,6 +34,7 @@ const NUMERIC_TYPE_TO_CHANNEL: Record<number, ReplyChannel> = {
   19: 'WhatsApp',
   32: 'FB',
   33: 'IG',
+  41: 'TIKTOK',
 };
 
 /**
@@ -67,7 +82,8 @@ export function resolveReplyChannel(payload: WebhookPayloadDto): ReplyChannel {
  *  3. Default → WhatsApp.
  */
 export function resolveInboundChannel(payload: InboundMessagePayloadDto): ReplyChannel {
-  const stringMatch = matchString(payload.messageType);
+  const stringMatch =
+    matchString(payload.messageType) ?? matchString(payload.messageTypeString);
   if (stringMatch) return stringMatch;
 
   if (typeof payload.messageTypeId === 'number') {
@@ -82,8 +98,16 @@ function matchString(raw: string | undefined): ReplyChannel | undefined {
   if (!raw) return undefined;
   const v = raw.toLowerCase();
   if (!v) return undefined;
+  // Order matters: more specific tokens must come before generic ones
+  // (e.g. 'custom' beats 'sms' so TYPE_CUSTOM_SMS resolves to 'Custom').
+  if (v.includes('tiktok')) return 'TIKTOK';
   if (v.includes('whatsapp')) return 'WhatsApp';
   if (v.includes('instagram') || v === 'ig') return 'IG';
   if (v.includes('facebook') || v === 'fb') return 'FB';
+  if (v.includes('live') || v.includes('webchat')) return 'Live_Chat';
+  if (v.includes('custom')) return 'Custom';
+  if (v.includes('email')) return 'Email';
+  if (v.includes('rcs')) return 'RCS';
+  if (v.includes('sms')) return 'SMS';
   return undefined;
 }

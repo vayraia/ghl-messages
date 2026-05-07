@@ -1,4 +1,5 @@
-import { resolveReplyChannel } from './channel-resolver';
+import { resolveInboundChannel, resolveReplyChannel } from './channel-resolver';
+import { InboundMessagePayloadDto } from './dto/inbound-message-payload.dto';
 import { WebhookPayloadDto } from './dto/webhook-payload.dto';
 
 function payload(overrides: Partial<WebhookPayloadDto>): WebhookPayloadDto {
@@ -104,7 +105,107 @@ describe('resolveReplyChannel', () => {
 
   it('returns WhatsApp default when none of the hints match a known channel', () => {
     expect(
-      resolveReplyChannel(payload({ contact: { lastAttributionSource: { medium: 'sms' } } })),
+      resolveReplyChannel(payload({ contact: { lastAttributionSource: { medium: 'pigeon' } } })),
     ).toBe('WhatsApp');
+  });
+
+  it('detects SMS from medium "sms"', () => {
+    expect(
+      resolveReplyChannel(payload({ contact: { lastAttributionSource: { medium: 'sms' } } })),
+    ).toBe('SMS');
+  });
+
+  it('detects Email from medium "email"', () => {
+    expect(
+      resolveReplyChannel(payload({ contact: { lastAttributionSource: { medium: 'email' } } })),
+    ).toBe('Email');
+  });
+
+  it('detects RCS from medium "rcs"', () => {
+    expect(
+      resolveReplyChannel(payload({ contact: { lastAttributionSource: { medium: 'rcs' } } })),
+    ).toBe('RCS');
+  });
+
+  it('detects Live_Chat from medium "live chat"', () => {
+    expect(
+      resolveReplyChannel(payload({ contact: { lastAttributionSource: { medium: 'live chat' } } })),
+    ).toBe('Live_Chat');
+  });
+
+  it('detects Live_Chat from medium "webchat"', () => {
+    expect(
+      resolveReplyChannel(payload({ contact: { lastAttributionSource: { medium: 'webchat' } } })),
+    ).toBe('Live_Chat');
+  });
+
+  it('detects Custom from medium "custom"', () => {
+    expect(
+      resolveReplyChannel(payload({ contact: { lastAttributionSource: { medium: 'custom' } } })),
+    ).toBe('Custom');
+  });
+
+  it('detects TIKTOK from medium "tiktok"', () => {
+    expect(
+      resolveReplyChannel(payload({ contact: { lastAttributionSource: { medium: 'tiktok' } } })),
+    ).toBe('TIKTOK');
+  });
+
+  it('routes TYPE_CUSTOM_SMS to Custom (not SMS) — custom wins over sms', () => {
+    expect(
+      resolveReplyChannel(payload({ message: { type: 'TYPE_CUSTOM_SMS', body: 'hi' } })),
+    ).toBe('Custom');
+  });
+
+  it('routes TYPE_TIKTOK to TIKTOK from string message.type', () => {
+    expect(resolveReplyChannel(payload({ message: { type: 'TYPE_TIKTOK', body: 'hi' } }))).toBe(
+      'TIKTOK',
+    );
+  });
+
+  it('maps numeric message.type 41 to TIKTOK', () => {
+    expect(resolveReplyChannel(payload({ message: { type: 41, body: 'hi' } }))).toBe('TIKTOK');
+  });
+});
+
+describe('resolveInboundChannel', () => {
+  function inbound(over: Partial<InboundMessagePayloadDto>): InboundMessagePayloadDto {
+    return { ...over } as InboundMessagePayloadDto;
+  }
+
+  it('defaults to WhatsApp when no fields are present', () => {
+    expect(resolveInboundChannel(inbound({}))).toBe('WhatsApp');
+  });
+
+  it('uses messageType string when present', () => {
+    expect(resolveInboundChannel(inbound({ messageType: 'WhatsApp' }))).toBe('WhatsApp');
+  });
+
+  it('falls back to messageTypeString when messageType is missing', () => {
+    expect(resolveInboundChannel(inbound({ messageTypeString: 'TYPE_TIKTOK' }))).toBe('TIKTOK');
+  });
+
+  it('maps messageTypeId 41 to TIKTOK', () => {
+    expect(resolveInboundChannel(inbound({ messageTypeId: 41 }))).toBe('TIKTOK');
+  });
+
+  it('maps messageTypeId 19 to WhatsApp', () => {
+    expect(resolveInboundChannel(inbound({ messageTypeId: 19 }))).toBe('WhatsApp');
+  });
+
+  it('falls through to default when messageTypeId is unknown', () => {
+    expect(resolveInboundChannel(inbound({ messageTypeId: 999 }))).toBe('WhatsApp');
+  });
+
+  it('messageType string takes priority over messageTypeId', () => {
+    expect(
+      resolveInboundChannel(inbound({ messageType: 'Instagram', messageTypeId: 41 })),
+    ).toBe('IG');
+  });
+
+  it('messageTypeString takes priority over messageTypeId', () => {
+    expect(
+      resolveInboundChannel(inbound({ messageTypeString: 'TYPE_INSTAGRAM', messageTypeId: 41 })),
+    ).toBe('IG');
   });
 });
