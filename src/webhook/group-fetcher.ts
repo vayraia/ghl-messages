@@ -19,9 +19,12 @@ export interface NonBlockingUser {
   name: string;
 }
 
+export type InsistenceSchedule = Record<string, unknown>;
+
 export interface GroupSettings {
   apiKey: string;
   insistences?: InsistenceEntry[];
+  insistenceSchedule?: InsistenceSchedule;
   aiFieldId?: AiFieldRef;
   defaultAgent?: string;
   nonBlockingUsers?: NonBlockingUser[];
@@ -31,6 +34,7 @@ interface GroupResponse {
   api_key?: string;
   general_settings?: {
     insistences?: InsistenceEntry[];
+    insistence_schedule?: unknown;
     ai_field_id?: { id?: unknown; key?: unknown };
     default_agent?: unknown;
     non_blocking_users?: unknown;
@@ -109,6 +113,7 @@ export class GroupFetcher {
       return {
         apiKey,
         insistences: body.general_settings?.insistences,
+        insistenceSchedule: parseInsistenceSchedule(body.general_settings?.insistence_schedule),
         aiFieldId: parseAiFieldId(body.general_settings?.ai_field_id),
         defaultAgent: parseDefaultAgent(body.general_settings?.default_agent),
         nonBlockingUsers: parseNonBlockingUsers(body.general_settings?.non_blocking_users),
@@ -151,6 +156,11 @@ function parseNonBlockingUsers(raw: unknown): NonBlockingUser[] | undefined {
     users.push({ id, name });
   }
   return users.length > 0 ? users : undefined;
+}
+
+function parseInsistenceSchedule(raw: unknown): InsistenceSchedule | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  return raw as InsistenceSchedule;
 }
 
 function parseAiFieldId(raw: unknown): AiFieldRef | undefined {

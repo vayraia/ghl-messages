@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import axios, { AxiosError, AxiosInstance } from 'axios';
 import { AppEnv } from '../config/env.validation';
 import { ReplyChannel } from './channel-resolver';
-import { InsistenceEntry } from './group-fetcher';
+import { InsistenceEntry, InsistenceSchedule } from './group-fetcher';
 
 export interface ScheduleInput {
   jobId: string;
@@ -13,6 +13,7 @@ export interface ScheduleInput {
   apiKey: string;
   replyChannel: ReplyChannel;
   insistences?: InsistenceEntry[];
+  schedule?: InsistenceSchedule;
 }
 
 export interface CancelInput {
@@ -69,7 +70,7 @@ export class InsistenceClient {
       return;
     }
 
-    const body = {
+    const body: Record<string, unknown> = {
       times,
       locationId: input.locationId,
       contactId: input.contactId,
@@ -77,6 +78,7 @@ export class InsistenceClient {
       apiKey: input.apiKey,
       replyChannel: input.replyChannel,
     };
+    if (input.schedule) body.schedule = input.schedule;
 
     let response;
     try {

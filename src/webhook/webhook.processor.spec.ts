@@ -100,6 +100,7 @@ describe('WebhookProcessor.process', () => {
       replyChannel: 'WhatsApp',
       apiKey: 'pit-loc-key',
       insistences: [{ hours: 0, minutes: 10 }],
+      schedule: undefined,
     });
 
     const groupOrder = (groupFetcher.fetch as jest.Mock).mock.invocationCallOrder[0];
@@ -111,6 +112,30 @@ describe('WebhookProcessor.process', () => {
     expect(ghlOrder).toBeLessThan(schedOrder);
 
     expect(result).toMatchObject({ ok: true, drained: 1, ghlStatus: 200 });
+  });
+
+  it('forwards group.insistenceSchedule to the insistence client as schedule', async () => {
+    const { processor, debouncer, forwarder, ghl, groupFetcher, insistence } = makeProcessor();
+
+    const schedule = {
+      monday: { active: true, start: '09:00', end: '18:00' },
+      saturday: { active: false, start: '09:00', end: '13:00' },
+    };
+    (debouncer.drain as jest.Mock).mockResolvedValue(sampleItems);
+    (groupFetcher.fetch as jest.Mock).mockResolvedValue({
+      apiKey: 'pit-loc-key',
+      insistences: [{ hours: 0, minutes: 10 }],
+      insistenceSchedule: schedule,
+    });
+    (forwarder.forward as jest.Mock).mockResolvedValue({ message: 'reply', durationMs: 5 });
+    (ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 3 });
+    (insistence.schedule as jest.Mock).mockResolvedValue(undefined);
+
+    await processor.process(makeJob());
+
+    expect(insistence.schedule).toHaveBeenCalledWith(
+      expect.objectContaining({ schedule }),
+    );
   });
 
   it('throws UnrecoverableError when locationId is missing on the conversation', async () => {

@@ -62,6 +62,7 @@ describe('GroupFetcher', () => {
         { hours: 0, minutes: 10 },
         { hours: 1, minutes: 0 },
       ],
+      insistenceSchedule: undefined,
       aiFieldId: undefined,
       nonBlockingUsers: undefined,
     });
@@ -85,9 +86,67 @@ describe('GroupFetcher', () => {
     expect(result).toEqual({
       apiKey: 'sk',
       insistences: undefined,
+      insistenceSchedule: undefined,
       aiFieldId: undefined,
       nonBlockingUsers: undefined,
     });
+  });
+
+  it('passes through insistence_schedule as-is when it is an object', async () => {
+    const { fetcher, get } = makeFetcher();
+    const schedule = {
+      monday: { active: true, start: '09:00', end: '18:00' },
+      tuesday: { active: true, start: '09:00', end: '18:00' },
+      wednesday: { active: true, start: '09:00', end: '18:00' },
+      thursday: { active: true, start: '09:00', end: '18:00' },
+      friday: { active: true, start: '09:00', end: '18:00' },
+      saturday: { active: false, start: '09:00', end: '13:00' },
+      sunday: { active: false, start: '09:00', end: '13:00' },
+    };
+    get.mockResolvedValue({
+      status: 200,
+      data: { api_key: 'sk', general_settings: { insistence_schedule: schedule } },
+    });
+
+    const result = await fetcher.fetch('loc_abc', 'job-1');
+
+    expect(result.insistenceSchedule).toEqual(schedule);
+  });
+
+  it('returns insistenceSchedule=undefined when insistence_schedule is not an object', async () => {
+    const { fetcher, get } = makeFetcher();
+    get.mockResolvedValue({
+      status: 200,
+      data: { api_key: 'sk', general_settings: { insistence_schedule: 'monday-friday' } },
+    });
+
+    const result = await fetcher.fetch('loc_abc', 'job-1');
+
+    expect(result.insistenceSchedule).toBeUndefined();
+  });
+
+  it('returns insistenceSchedule=undefined when insistence_schedule is an array', async () => {
+    const { fetcher, get } = makeFetcher();
+    get.mockResolvedValue({
+      status: 200,
+      data: { api_key: 'sk', general_settings: { insistence_schedule: [] } },
+    });
+
+    const result = await fetcher.fetch('loc_abc', 'job-1');
+
+    expect(result.insistenceSchedule).toBeUndefined();
+  });
+
+  it('returns insistenceSchedule=undefined when insistence_schedule is null', async () => {
+    const { fetcher, get } = makeFetcher();
+    get.mockResolvedValue({
+      status: 200,
+      data: { api_key: 'sk', general_settings: { insistence_schedule: null } },
+    });
+
+    const result = await fetcher.fetch('loc_abc', 'job-1');
+
+    expect(result.insistenceSchedule).toBeUndefined();
   });
 
   it('exposes aiFieldId when general_settings.ai_field_id has id and key', async () => {

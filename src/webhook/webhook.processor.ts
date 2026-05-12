@@ -177,6 +177,7 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
         replyChannel,
         apiKey: group.apiKey,
         insistences: group.insistences,
+        schedule: group.insistenceSchedule,
       });
     } catch (err) {
       this.logger.warn(

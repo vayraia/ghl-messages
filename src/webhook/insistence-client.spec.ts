@@ -146,6 +146,47 @@ describe('InsistenceClient', () => {
       const [, body] = post.mock.calls[0];
       expect(body.replyChannel).toBe('IG');
     });
+
+    it('forwards schedule to the POST body when provided', async () => {
+      const { client, post } = makeClient();
+      post.mockResolvedValue({ status: 200, data: {} });
+
+      const schedule = {
+        monday: { active: true, start: '09:00', end: '18:00' },
+        tuesday: { active: true, start: '09:00', end: '18:00' },
+        wednesday: { active: true, start: '09:00', end: '18:00' },
+        thursday: { active: true, start: '09:00', end: '18:00' },
+        friday: { active: true, start: '09:00', end: '18:00' },
+        saturday: { active: false, start: '09:00', end: '13:00' },
+        sunday: { active: false, start: '09:00', end: '13:00' },
+      };
+      await client.schedule({ ...baseInput, schedule });
+
+      const [, body] = post.mock.calls[0];
+      expect(body.schedule).toEqual(schedule);
+    });
+
+    it('omits schedule from the POST body when not provided', async () => {
+      const { client, post } = makeClient();
+      post.mockResolvedValue({ status: 200, data: {} });
+
+      await client.schedule(baseInput);
+
+      const [, body] = post.mock.calls[0];
+      expect(body).not.toHaveProperty('schedule');
+    });
+
+    it('does not POST when there are no positive insistences even if schedule is set', async () => {
+      const { client, post } = makeClient();
+
+      await client.schedule({
+        ...baseInput,
+        insistences: [{ hours: 0, minutes: 0 }],
+        schedule: { monday: { active: true, start: '09:00', end: '18:00' } },
+      });
+
+      expect(post).not.toHaveBeenCalled();
+    });
   });
 
   describe('cancel', () => {
