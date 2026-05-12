@@ -3,6 +3,7 @@ import { Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Job, UnrecoverableError } from 'bullmq';
 import { AppEnv } from '../config/env.validation';
+import { resolveAgentForChannel } from './channel-resolver';
 import { WebhookForwarder } from './webhook-forwarder';
 import { GhlContactClient } from './ghl-contact-client';
 import { GhlReply } from './ghl-reply';
@@ -85,14 +86,18 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
 
     const group = await this.groupFetcher.fetch(locationId, String(job.id));
 
-    // Inbound flushes resolve agentId from the group's default_agent. If the
-    // group has none, drop silently — there is no agent to forward to.
+    // Inbound flushes resolve agentId from the group: per-channel override
+    // (`channel_agents.<channel>`) takes precedence over `default_agent`.
+    // If neither is configured for this channel, drop silently — there is
+    // no agent to forward to.
     let agentId: string;
     if (source === 'inbound') {
-      if (!group.defaultAgent) {
+      const channelAgent = resolveAgentForChannel(group.channelAgents, replyChannel);
+      const resolved = channelAgent ?? group.defaultAgent;
+      if (!resolved) {
         this.logger.log(
-          { jobId: job.id, locationId, contactId },
-          'Inbound flush skipped — group has no default_agent',
+          { jobId: job.id, locationId, contactId, replyChannel },
+          'Inbound flush skipped — no channel_agent or default_agent configured',
         );
         return {
           ok: true,
@@ -101,7 +106,7 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
           skipped: 'no_default_agent',
         };
       }
-      agentId = group.defaultAgent;
+      agentId = resolved;
     } else {
       if (!job.data.agentId) {
         throw new UnrecoverableError('agentId missing for workflow flush');

@@ -378,6 +378,65 @@ describe('WebhookProcessor.process', () => {
       );
       expect(result).toMatchObject({ ok: true, drained: 1, ghlStatus: 200 });
     });
+
+    it('prefers channel_agents over default_agent when the channel has an entry', async () => {
+      const p = makeProcessor();
+      (p.debouncer.drain as jest.Mock).mockResolvedValue(inboundItems);
+      (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({
+        apiKey: 'pit-k',
+        defaultAgent: 'agent_default',
+        channelAgents: { whatsapp: 'agent_wpp' },
+        insistences: [{ hours: 1 }],
+      });
+      (p.forwarder.forward as jest.Mock).mockResolvedValue({ message: 'reply', durationMs: 1 });
+      (p.ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 1 });
+      (p.insistence.schedule as jest.Mock).mockResolvedValue(undefined);
+
+      await p.processor.process(inboundJob());
+
+      expect(p.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: 'agent_wpp' }),
+      );
+      expect(p.insistence.schedule).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: 'agent_wpp' }),
+      );
+    });
+
+    it('falls back to default_agent when channel_agents has no entry for the channel', async () => {
+      const p = makeProcessor();
+      (p.debouncer.drain as jest.Mock).mockResolvedValue(inboundItems);
+      (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({
+        apiKey: 'pit-k',
+        defaultAgent: 'agent_default',
+        channelAgents: { facebook: 'agent_fb' },
+        insistences: [{ hours: 1 }],
+      });
+      (p.forwarder.forward as jest.Mock).mockResolvedValue({ message: 'reply', durationMs: 1 });
+      (p.ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 1 });
+      (p.insistence.schedule as jest.Mock).mockResolvedValue(undefined);
+
+      await p.processor.process(inboundJob());
+
+      expect(p.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: 'agent_default' }),
+      );
+    });
+
+    it('skips when neither channel_agents nor default_agent resolves an agent', async () => {
+      const p = makeProcessor();
+      (p.debouncer.drain as jest.Mock).mockResolvedValue(inboundItems);
+      (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({
+        apiKey: 'pit-k',
+        channelAgents: { facebook: 'agent_fb' },
+      });
+
+      const result = await p.processor.process(inboundJob());
+
+      expect(p.forwarder.forward).not.toHaveBeenCalled();
+      expect(p.ghl.send).not.toHaveBeenCalled();
+      expect(p.insistence.schedule).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ ok: true, drained: 1, skipped: 'no_default_agent' });
+    });
   });
 
   it('does not invoke any downstream when the drained list is empty', async () => {

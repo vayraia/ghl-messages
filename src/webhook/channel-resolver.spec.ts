@@ -1,4 +1,4 @@
-import { resolveInboundChannel, resolveReplyChannel } from './channel-resolver';
+import { resolveAgentForChannel, resolveInboundChannel, resolveReplyChannel } from './channel-resolver';
 import { InboundMessagePayloadDto } from './dto/inbound-message-payload.dto';
 import { WebhookPayloadDto } from './dto/webhook-payload.dto';
 
@@ -207,5 +207,54 @@ describe('resolveInboundChannel', () => {
     expect(
       resolveInboundChannel(inbound({ messageTypeString: 'TYPE_INSTAGRAM', messageTypeId: 41 })),
     ).toBe('IG');
+  });
+});
+
+describe('resolveAgentForChannel', () => {
+  const agents = {
+    whatsapp: 'a_wpp',
+    facebook: 'a_fb',
+    instagram: 'a_ig',
+    tiktok: 'a_tt',
+  };
+
+  it('maps WhatsApp to channel_agents.whatsapp', () => {
+    expect(resolveAgentForChannel(agents, 'WhatsApp')).toBe('a_wpp');
+  });
+
+  it('maps FB to channel_agents.facebook', () => {
+    expect(resolveAgentForChannel(agents, 'FB')).toBe('a_fb');
+  });
+
+  it('maps IG to channel_agents.instagram', () => {
+    expect(resolveAgentForChannel(agents, 'IG')).toBe('a_ig');
+  });
+
+  it('maps TIKTOK to channel_agents.tiktok', () => {
+    expect(resolveAgentForChannel(agents, 'TIKTOK')).toBe('a_tt');
+  });
+
+  it('returns undefined when agents is undefined', () => {
+    expect(resolveAgentForChannel(undefined, 'WhatsApp')).toBeUndefined();
+  });
+
+  it('returns undefined when the channel has no mapping (SMS/Email/RCS/Custom/Live_Chat)', () => {
+    expect(resolveAgentForChannel(agents, 'SMS')).toBeUndefined();
+    expect(resolveAgentForChannel(agents, 'Email')).toBeUndefined();
+    expect(resolveAgentForChannel(agents, 'RCS')).toBeUndefined();
+    expect(resolveAgentForChannel(agents, 'Custom')).toBeUndefined();
+    expect(resolveAgentForChannel(agents, 'Live_Chat')).toBeUndefined();
+  });
+
+  it('returns undefined when the entry for that channel is missing', () => {
+    expect(resolveAgentForChannel({ whatsapp: 'a_wpp' }, 'FB')).toBeUndefined();
+  });
+
+  it('returns undefined when the entry is a blank string', () => {
+    expect(resolveAgentForChannel({ whatsapp: '   ' }, 'WhatsApp')).toBeUndefined();
+  });
+
+  it('trims surrounding whitespace from the resolved agent id', () => {
+    expect(resolveAgentForChannel({ whatsapp: '  a_wpp  ' }, 'WhatsApp')).toBe('a_wpp');
   });
 });

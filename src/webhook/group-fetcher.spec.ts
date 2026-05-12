@@ -64,6 +64,7 @@ describe('GroupFetcher', () => {
       ],
       insistenceSchedule: undefined,
       aiFieldId: undefined,
+      channelAgents: undefined,
       nonBlockingUsers: undefined,
     });
   });
@@ -88,8 +89,99 @@ describe('GroupFetcher', () => {
       insistences: undefined,
       insistenceSchedule: undefined,
       aiFieldId: undefined,
+      channelAgents: undefined,
       nonBlockingUsers: undefined,
     });
+  });
+
+  it('parses channel_agents when entries are non-blank strings', async () => {
+    const { fetcher, get } = makeFetcher();
+    get.mockResolvedValue({
+      status: 200,
+      data: {
+        api_key: 'sk',
+        general_settings: {
+          channel_agents: {
+            whatsapp: 'a_wpp',
+            facebook: 'a_fb',
+            instagram: 'a_ig',
+            tiktok: 'a_tt',
+          },
+        },
+      },
+    });
+
+    const result = await fetcher.fetch('loc_abc', 'job-1');
+
+    expect(result.channelAgents).toEqual({
+      whatsapp: 'a_wpp',
+      facebook: 'a_fb',
+      instagram: 'a_ig',
+      tiktok: 'a_tt',
+    });
+  });
+
+  it('drops blank and non-string channel_agents entries and trims values', async () => {
+    const { fetcher, get } = makeFetcher();
+    get.mockResolvedValue({
+      status: 200,
+      data: {
+        api_key: 'sk',
+        general_settings: {
+          channel_agents: {
+            whatsapp: '  a_wpp  ',
+            facebook: '',
+            instagram: '   ',
+            tiktok: 42,
+          },
+        },
+      },
+    });
+
+    const result = await fetcher.fetch('loc_abc', 'job-1');
+
+    expect(result.channelAgents).toEqual({ whatsapp: 'a_wpp' });
+  });
+
+  it('returns channelAgents=undefined when all entries are blank', async () => {
+    const { fetcher, get } = makeFetcher();
+    get.mockResolvedValue({
+      status: 200,
+      data: {
+        api_key: 'sk',
+        general_settings: {
+          channel_agents: { whatsapp: '', facebook: '   ', instagram: '', tiktok: '' },
+        },
+      },
+    });
+
+    const result = await fetcher.fetch('loc_abc', 'job-1');
+
+    expect(result.channelAgents).toBeUndefined();
+  });
+
+  it('returns channelAgents=undefined when channel_agents is not an object', async () => {
+    const { fetcher, get } = makeFetcher();
+    get.mockResolvedValue({
+      status: 200,
+      data: { api_key: 'sk', general_settings: { channel_agents: 'a_wpp' } },
+    });
+
+    const result = await fetcher.fetch('loc_abc', 'job-1');
+
+    expect(result.channelAgents).toBeUndefined();
+  });
+
+  it('returns channelAgents=undefined when channel_agents is an array', async () => {
+    const { fetcher, get } = makeFetcher();
+    get.mockResolvedValue({
+      status: 200,
+      data: { api_key: 'sk', general_settings: { channel_agents: [] } },
+    });
+
+    const result = await fetcher.fetch('loc_abc', 'job-1');
+
+    expect(result.channelAgents).toBeUndefined();
   });
 
   it('passes through insistence_schedule as-is when it is an object', async () => {

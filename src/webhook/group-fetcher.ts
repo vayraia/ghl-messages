@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import axios, { AxiosError, AxiosInstance } from 'axios';
 import { UnrecoverableError } from 'bullmq';
 import { AppEnv } from '../config/env.validation';
+import { ChannelAgents } from './channel-resolver';
 
 export interface InsistenceEntry {
   hours?: number;
@@ -27,6 +28,7 @@ export interface GroupSettings {
   insistenceSchedule?: InsistenceSchedule;
   aiFieldId?: AiFieldRef;
   defaultAgent?: string;
+  channelAgents?: ChannelAgents;
   nonBlockingUsers?: NonBlockingUser[];
 }
 
@@ -37,6 +39,7 @@ interface GroupResponse {
     insistence_schedule?: unknown;
     ai_field_id?: { id?: unknown; key?: unknown };
     default_agent?: unknown;
+    channel_agents?: unknown;
     non_blocking_users?: unknown;
     [key: string]: unknown;
   };
@@ -116,6 +119,7 @@ export class GroupFetcher {
         insistenceSchedule: parseInsistenceSchedule(body.general_settings?.insistence_schedule),
         aiFieldId: parseAiFieldId(body.general_settings?.ai_field_id),
         defaultAgent: parseDefaultAgent(body.general_settings?.default_agent),
+        channelAgents: parseChannelAgents(body.general_settings?.channel_agents),
         nonBlockingUsers: parseNonBlockingUsers(body.general_settings?.non_blocking_users),
       };
     }
@@ -156,6 +160,19 @@ function parseNonBlockingUsers(raw: unknown): NonBlockingUser[] | undefined {
     users.push({ id, name });
   }
   return users.length > 0 ? users : undefined;
+}
+
+function parseChannelAgents(raw: unknown): ChannelAgents | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const r = raw as Record<string, unknown>;
+  const out: ChannelAgents = {};
+  for (const key of ['whatsapp', 'facebook', 'instagram', 'tiktok'] as const) {
+    const v = r[key];
+    if (typeof v !== 'string') continue;
+    const trimmed = v.trim();
+    if (trimmed.length > 0) out[key] = trimmed;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function parseInsistenceSchedule(raw: unknown): InsistenceSchedule | undefined {

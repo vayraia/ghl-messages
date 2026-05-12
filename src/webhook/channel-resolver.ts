@@ -94,6 +94,44 @@ export function resolveInboundChannel(payload: InboundMessagePayloadDto): ReplyC
   return 'WhatsApp';
 }
 
+/**
+ * Per-channel agent overrides from `general_settings.channel_agents`.
+ * Each entry, when present and non-blank, is the agent id used for
+ * inbound messages on that channel — taking precedence over `default_agent`.
+ */
+export interface ChannelAgents {
+  whatsapp?: string;
+  facebook?: string;
+  instagram?: string;
+  tiktok?: string;
+}
+
+const CHANNEL_TO_AGENT_KEY: Partial<Record<ReplyChannel, keyof ChannelAgents>> = {
+  WhatsApp: 'whatsapp',
+  FB: 'facebook',
+  IG: 'instagram',
+  TIKTOK: 'tiktok',
+};
+
+/**
+ * Returns the channel-specific agent id from `channel_agents`, or undefined
+ * when the map is missing, the channel has no mapping (SMS/Email/RCS/Custom/
+ * Live_Chat), or the entry is missing / blank. Callers fall back to
+ * `default_agent` in that case.
+ */
+export function resolveAgentForChannel(
+  agents: ChannelAgents | undefined,
+  channel: ReplyChannel,
+): string | undefined {
+  if (!agents) return undefined;
+  const key = CHANNEL_TO_AGENT_KEY[channel];
+  if (!key) return undefined;
+  const value = agents[key];
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 function matchString(raw: string | undefined): ReplyChannel | undefined {
   if (!raw) return undefined;
   const v = raw.toLowerCase();
