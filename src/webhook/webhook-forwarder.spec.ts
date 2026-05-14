@@ -55,7 +55,10 @@ describe('WebhookForwarder', () => {
 
   it('POSTs to /chat with the contract body and trace headers', async () => {
     const { forwarder, post } = makeForwarder();
-    post.mockResolvedValue({ status: 200, data: { message: 'ok' } });
+    post.mockResolvedValue({
+      status: 200,
+      data: { messages: [{ type: 'text', content: 'ok' }] },
+    });
 
     const result = await forwarder.forward(baseReq);
 
@@ -73,13 +76,16 @@ describe('WebhookForwarder', () => {
       'x-webhook-received-at': baseReq.receivedAt,
       'x-request-id': 'req-1',
     });
-    expect(result.message).toBe('ok');
+    expect(result.messages).toEqual([{ type: 'text', content: 'ok' }]);
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
   });
 
   it('emits contact_data.name when a contactName is provided', async () => {
     const { forwarder, post } = makeForwarder();
-    post.mockResolvedValue({ status: 200, data: { message: 'ok' } });
+    post.mockResolvedValue({
+      status: 200,
+      data: { messages: [{ type: 'text', content: 'ok' }] },
+    });
 
     await forwarder.forward({ ...baseReq, contactName: 'Fabio Coronado' });
 
@@ -94,7 +100,10 @@ describe('WebhookForwarder', () => {
 
   it('includes attachments in message when provided', async () => {
     const { forwarder, post } = makeForwarder();
-    post.mockResolvedValue({ status: 200, data: { message: 'ok' } });
+    post.mockResolvedValue({
+      status: 200,
+      data: { messages: [{ type: 'text', content: 'ok' }] },
+    });
 
     await forwarder.forward({
       ...baseReq,
@@ -110,7 +119,10 @@ describe('WebhookForwarder', () => {
 
   it('omits attachments key when array is empty', async () => {
     const { forwarder, post } = makeForwarder();
-    post.mockResolvedValue({ status: 200, data: { message: 'ok' } });
+    post.mockResolvedValue({
+      status: 200,
+      data: { messages: [{ type: 'text', content: 'ok' }] },
+    });
 
     await forwarder.forward({ ...baseReq, attachments: [] });
 
@@ -121,7 +133,10 @@ describe('WebhookForwarder', () => {
 
   it('keeps contact_data empty when contactName is absent', async () => {
     const { forwarder, post } = makeForwarder();
-    post.mockResolvedValue({ status: 200, data: { message: 'ok' } });
+    post.mockResolvedValue({
+      status: 200,
+      data: { messages: [{ type: 'text', content: 'ok' }] },
+    });
 
     await forwarder.forward(baseReq);
 
@@ -129,17 +144,89 @@ describe('WebhookForwarder', () => {
     expect(body.contact_data).toEqual({});
   });
 
-  it('returns the message field from the chat response', async () => {
+  it('parses a multi-message reply preserving order and per-type fields', async () => {
     const { forwarder, post } = makeForwarder();
-    post.mockResolvedValue({ status: 200, data: { message: 'Hola, buenos días ☺️' } });
+    post.mockResolvedValue({
+      status: 200,
+      data: {
+        messages: [
+          { type: 'text', content: 'Encontré 3 opciones para vos.' },
+          { type: 'image', url: 'https://cdn.app.com/img1.jpg', caption: 'Modelo A' },
+          { type: 'text', content: 'Este tiene mejor batería.' },
+          { type: 'file', url: 'https://cdn.app.com/specs.pdf', filename: 'specs.pdf' },
+        ],
+      },
+    });
 
     const result = await forwarder.forward(baseReq);
-    expect(result.message).toBe('Hola, buenos días ☺️');
+
+    expect(result.messages).toEqual([
+      { type: 'text', content: 'Encontré 3 opciones para vos.' },
+      { type: 'image', url: 'https://cdn.app.com/img1.jpg', caption: 'Modelo A' },
+      { type: 'text', content: 'Este tiene mejor batería.' },
+      { type: 'file', url: 'https://cdn.app.com/specs.pdf', filename: 'specs.pdf' },
+    ]);
   });
 
-  it('throws UnrecoverableError on 2xx without a message field', async () => {
+  it('parses image without caption and file without filename', async () => {
     const { forwarder, post } = makeForwarder();
-    post.mockResolvedValue({ status: 200, data: { message: '' } });
+    post.mockResolvedValue({
+      status: 200,
+      data: {
+        messages: [
+          { type: 'image', url: 'https://cdn.app.com/x.jpg' },
+          { type: 'file', url: 'https://cdn.app.com/y.pdf' },
+        ],
+      },
+    });
+
+    const result = await forwarder.forward(baseReq);
+    expect(result.messages).toEqual([
+      { type: 'image', url: 'https://cdn.app.com/x.jpg' },
+      { type: 'file', url: 'https://cdn.app.com/y.pdf' },
+    ]);
+  });
+
+  it('throws UnrecoverableError on 2xx without a messages field', async () => {
+    const { forwarder, post } = makeForwarder();
+    post.mockResolvedValue({ status: 200, data: { something: 'else' } });
+
+    await expect(forwarder.forward(baseReq)).rejects.toBeInstanceOf(UnrecoverableError);
+  });
+
+  it('throws UnrecoverableError on 2xx with an empty messages array', async () => {
+    const { forwarder, post } = makeForwarder();
+    post.mockResolvedValue({ status: 200, data: { messages: [] } });
+
+    await expect(forwarder.forward(baseReq)).rejects.toBeInstanceOf(UnrecoverableError);
+  });
+
+  it('throws UnrecoverableError when a text entry has empty content', async () => {
+    const { forwarder, post } = makeForwarder();
+    post.mockResolvedValue({
+      status: 200,
+      data: { messages: [{ type: 'text', content: '   ' }] },
+    });
+
+    await expect(forwarder.forward(baseReq)).rejects.toBeInstanceOf(UnrecoverableError);
+  });
+
+  it('throws UnrecoverableError when an image entry has no url', async () => {
+    const { forwarder, post } = makeForwarder();
+    post.mockResolvedValue({
+      status: 200,
+      data: { messages: [{ type: 'image', caption: 'no url' }] },
+    });
+
+    await expect(forwarder.forward(baseReq)).rejects.toBeInstanceOf(UnrecoverableError);
+  });
+
+  it('throws UnrecoverableError when an entry has an unknown type', async () => {
+    const { forwarder, post } = makeForwarder();
+    post.mockResolvedValue({
+      status: 200,
+      data: { messages: [{ type: 'audio', url: 'x' }] },
+    });
 
     await expect(forwarder.forward(baseReq)).rejects.toBeInstanceOf(UnrecoverableError);
   });

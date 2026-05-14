@@ -16,19 +16,24 @@ export interface ChatRequest {
   requestId: string | undefined;
 }
 
+export type ChatMessage =
+  | { type: 'text'; content: string }
+  | { type: 'image'; url: string; caption?: string }
+  | { type: 'file'; url: string; filename?: string };
+
 export interface ChatResponse {
-  message: string;
+  messages: ChatMessage[];
   durationMs: number;
 }
 
 /**
  * POSTs the coalesced inbound message to the configured AI service at
- * `${CHAT_API_URL}/chat` and returns its `message` field.
+ * `${CHAT_API_URL}/chat` and returns its `messages` array.
  *
  * Failure handling matches BullMQ's retry contract:
- *  - 2xx with a non-empty `message` → success.
- *  - 2xx with a missing/empty `message` → `UnrecoverableError` (contract
- *    violation — retrying won't help).
+ *  - 2xx with a non-empty `messages` array of valid entries → success.
+ *  - 2xx with a missing/empty/invalid `messages` field → `UnrecoverableError`
+ *    (contract violation — retrying won't help).
  *  - 4xx → `UnrecoverableError` (no retry).
  *  - 5xx / network / timeout → regular `Error` (BullMQ retries).
  */
@@ -89,18 +94,21 @@ export class WebhookForwarder {
     const { status } = response;
 
     if (status >= 200 && status < 300) {
-      const reply = extractMessage(response.data);
-      if (!reply) {
+      const messages = extractMessages(response.data);
+      if (!messages) {
         this.logger.warn(
           { jobId: req.jobId, status, durationMs, body: summarizeBody(response.data) },
-          'Chat API responded 2xx without a message — non-retryable',
+          'Chat API responded 2xx with invalid messages — non-retryable',
         );
         throw new UnrecoverableError(
-          `Chat API responded ${status} without a non-empty "message" field`,
+          `Chat API responded ${status} without a valid non-empty "messages" array`,
         );
       }
-      this.logger.log({ jobId: req.jobId, status, durationMs }, 'Chat API replied');
-      return { message: reply, durationMs };
+      this.logger.log(
+        { jobId: req.jobId, status, durationMs, count: messages.length },
+        'Chat API replied',
+      );
+      return { messages, durationMs };
     }
 
     const summary = summarizeBody(response.data);
@@ -121,14 +129,49 @@ export class WebhookForwarder {
   }
 }
 
-function extractMessage(data: unknown): string {
-  if (data && typeof data === 'object' && 'message' in data) {
-    const m = (data as { message: unknown }).message;
-    if (typeof m === 'string' && m.trim().length > 0) {
-      return m;
-    }
+/**
+ * Validates the `/chat` response shape. Returns the typed `messages` array on
+ * success or `undefined` if the payload is missing it, has the wrong shape,
+ * or contains any element that fails per-type validation.
+ */
+function extractMessages(data: unknown): ChatMessage[] | undefined {
+  if (!data || typeof data !== 'object' || !('messages' in data)) return undefined;
+  const raw = (data as { messages: unknown }).messages;
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+
+  const out: ChatMessage[] = [];
+  for (const entry of raw) {
+    const parsed = parseChatMessage(entry);
+    if (!parsed) return undefined;
+    out.push(parsed);
   }
-  return '';
+  return out;
+}
+
+function parseChatMessage(entry: unknown): ChatMessage | undefined {
+  if (!entry || typeof entry !== 'object') return undefined;
+  const e = entry as Record<string, unknown>;
+  switch (e.type) {
+    case 'text': {
+      const content = e.content;
+      if (typeof content !== 'string' || content.trim().length === 0) return undefined;
+      return { type: 'text', content };
+    }
+    case 'image': {
+      const url = e.url;
+      if (typeof url !== 'string' || url.length === 0) return undefined;
+      const caption = typeof e.caption === 'string' ? e.caption : undefined;
+      return { type: 'image', url, ...(caption !== undefined ? { caption } : {}) };
+    }
+    case 'file': {
+      const url = e.url;
+      if (typeof url !== 'string' || url.length === 0) return undefined;
+      const filename = typeof e.filename === 'string' ? e.filename : undefined;
+      return { type: 'file', url, ...(filename !== undefined ? { filename } : {}) };
+    }
+    default:
+      return undefined;
+  }
 }
 
 function summarizeBody(body: unknown): string {

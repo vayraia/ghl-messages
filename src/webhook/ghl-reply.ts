@@ -11,6 +11,7 @@ export interface GhlReplyInput {
   message: string;
   type: ReplyChannel;
   apiKey: string;
+  attachments?: string[];
 }
 
 export interface GhlReplyResult {
@@ -46,11 +47,19 @@ export class GhlReply {
   }
 
   async send(input: GhlReplyInput): Promise<GhlReplyResult> {
-    const body = {
+    const body: {
+      contactId: string;
+      message: string;
+      type: ReplyChannel;
+      attachments?: string[];
+    } = {
       contactId: input.contactId,
       message: input.message,
       type: input.type,
     };
+    if (input.attachments && input.attachments.length > 0) {
+      body.attachments = input.attachments;
+    }
 
     const started = Date.now();
     let response;

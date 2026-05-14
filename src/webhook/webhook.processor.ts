@@ -4,13 +4,20 @@ import { ConfigService } from '@nestjs/config';
 import { Job, UnrecoverableError } from 'bullmq';
 import { AppEnv } from '../config/env.validation';
 import { resolveAgentForChannel } from './channel-resolver';
-import { WebhookForwarder } from './webhook-forwarder';
+import { ChatMessage, WebhookForwarder } from './webhook-forwarder';
 import { GhlContactClient } from './ghl-contact-client';
 import { GhlReply } from './ghl-reply';
 import { GroupFetcher } from './group-fetcher';
 import { InsistenceClient } from './insistence-client';
 import { FlushJobData, MessageDebouncer } from './message-debouncer';
 import { WEBHOOK_FLUSH_JOB, WEBHOOK_QUEUE_TOKEN } from './webhook.tokens';
+
+/**
+ * Pacing between consecutive GHL sends when the chat reply contains
+ * multiple messages — GHL doesn't guarantee ordering on rapid-fire posts,
+ * so we space them out client-side.
+ */
+const CHAT_MESSAGE_DELAY_MS = 2500;
 
 export interface FlushResult {
   ok: true;
@@ -165,29 +172,66 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
       requestId,
     });
 
-    const ghl = await this.ghl.send({
-      jobId: String(job.id),
-      contactId,
-      message: chat.message,
-      type: replyChannel,
-      apiKey: group.apiKey,
-    });
+    let lastStatus: number | undefined;
+    let sent = 0;
+    let failed = 0;
+    for (let i = 0; i < chat.messages.length; i++) {
+      if (i > 0) await sleep(CHAT_MESSAGE_DELAY_MS);
+      const payload = toGhlPayload(chat.messages[i]);
+      try {
+        const result = await this.ghl.send({
+          jobId: String(job.id),
+          contactId,
+          message: payload.message,
+          type: replyChannel,
+          apiKey: group.apiKey,
+          attachments: payload.attachments,
+        });
+        sent++;
+        lastStatus = result.status;
+      } catch (err) {
+        failed++;
+        // Best-effort: a mid-sequence failure must NOT bubble up, otherwise
+        // BullMQ would retry the whole job and re-send the messages that
+        // already landed before the failure. Log and continue.
+        this.logger.warn(
+          {
+            jobId: job.id,
+            contactId,
+            index: i,
+            total: chat.messages.length,
+            messageType: chat.messages[i].type,
+            err: (err as Error).message,
+          },
+          'GHL send failed mid-sequence — continuing with remaining messages',
+        );
+      }
+    }
 
-    try {
-      await this.insistence.schedule({
-        jobId: String(job.id),
-        locationId,
-        contactId,
-        agentId,
-        replyChannel,
-        apiKey: group.apiKey,
-        insistences: group.insistences,
-        schedule: group.insistenceSchedule,
-      });
-    } catch (err) {
+    // Only schedule follow-ups if the bot actually said something. If every
+    // send failed there is nothing for the contact to "insist" against.
+    if (sent > 0) {
+      try {
+        await this.insistence.schedule({
+          jobId: String(job.id),
+          locationId,
+          contactId,
+          agentId,
+          replyChannel,
+          apiKey: group.apiKey,
+          insistences: group.insistences,
+          schedule: group.insistenceSchedule,
+        });
+      } catch (err) {
+        this.logger.warn(
+          { jobId: job.id, err: (err as Error).message },
+          'Insistence scheduling failed (swallowed)',
+        );
+      }
+    } else {
       this.logger.warn(
-        { jobId: job.id, err: (err as Error).message },
-        'Insistence scheduling failed (swallowed)',
+        { jobId: job.id, contactId, failed, total: chat.messages.length },
+        'All GHL sends failed — skipping insistence schedule',
       );
     }
 
@@ -195,10 +239,36 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
       ok: true,
       drained: items.length,
       chatStatus: 200,
-      ghlStatus: ghl.status,
+      ghlStatus: lastStatus,
       totalMs: Date.now() - started,
     };
   }
+}
+
+interface GhlSendPayload {
+  message: string;
+  attachments?: string[];
+}
+
+/**
+ * Maps a single `/chat` reply element to the body fields used by
+ * `POST /conversations/messages`. The image `caption` becomes the message
+ * body so it renders as a caption in the receiving channel; `file` sends
+ * the URL with an empty message for now (filename is intentionally ignored).
+ */
+function toGhlPayload(m: ChatMessage): GhlSendPayload {
+  switch (m.type) {
+    case 'text':
+      return { message: m.content };
+    case 'image':
+      return { message: m.caption ?? '', attachments: [m.url] };
+    case 'file':
+      return { message: '', attachments: [m.url] };
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**

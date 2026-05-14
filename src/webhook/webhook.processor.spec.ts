@@ -78,7 +78,10 @@ describe('WebhookProcessor.process', () => {
       apiKey: 'pit-loc-key',
       insistences: [{ hours: 0, minutes: 10 }],
     });
-    (forwarder.forward as jest.Mock).mockResolvedValue({ message: 'reply', durationMs: 5 });
+    (forwarder.forward as jest.Mock).mockResolvedValue({
+      messages: [{ type: 'text', content: 'reply' }],
+      durationMs: 5,
+    });
     (ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 3 });
     (insistence.schedule as jest.Mock).mockResolvedValue(undefined);
 
@@ -127,7 +130,10 @@ describe('WebhookProcessor.process', () => {
       insistences: [{ hours: 0, minutes: 10 }],
       insistenceSchedule: schedule,
     });
-    (forwarder.forward as jest.Mock).mockResolvedValue({ message: 'reply', durationMs: 5 });
+    (forwarder.forward as jest.Mock).mockResolvedValue({
+      messages: [{ type: 'text', content: 'reply' }],
+      durationMs: 5,
+    });
     (ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 3 });
     (insistence.schedule as jest.Mock).mockResolvedValue(undefined);
 
@@ -165,7 +171,10 @@ describe('WebhookProcessor.process', () => {
 
     (debouncer.drain as jest.Mock).mockResolvedValue(sampleItems);
     (groupFetcher.fetch as jest.Mock).mockResolvedValue({ apiKey: 'k', insistences: [] });
-    (forwarder.forward as jest.Mock).mockResolvedValue({ message: 'reply', durationMs: 5 });
+    (forwarder.forward as jest.Mock).mockResolvedValue({
+      messages: [{ type: 'text', content: 'reply' }],
+      durationMs: 5,
+    });
     (ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 3 });
     (insistence.schedule as jest.Mock).mockRejectedValue(new Error('boom'));
 
@@ -177,7 +186,10 @@ describe('WebhookProcessor.process', () => {
   describe('AI gate', () => {
     function setupHappyPathMocks(p: ReturnType<typeof makeProcessor>) {
       (p.debouncer.drain as jest.Mock).mockResolvedValue(sampleItems);
-      (p.forwarder.forward as jest.Mock).mockResolvedValue({ message: 'reply', durationMs: 1 });
+      (p.forwarder.forward as jest.Mock).mockResolvedValue({
+        messages: [{ type: 'text', content: 'reply' }],
+        durationMs: 1,
+      });
       (p.ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 1 });
       (p.insistence.schedule as jest.Mock).mockResolvedValue(undefined);
     }
@@ -351,7 +363,10 @@ describe('WebhookProcessor.process', () => {
         defaultAgent: 'agent_default',
         insistences: [{ hours: 1 }],
       });
-      (p.forwarder.forward as jest.Mock).mockResolvedValue({ message: 'reply', durationMs: 1 });
+      (p.forwarder.forward as jest.Mock).mockResolvedValue({
+        messages: [{ type: 'text', content: 'reply' }],
+        durationMs: 1,
+      });
       (p.ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 1 });
       (p.insistence.schedule as jest.Mock).mockResolvedValue(undefined);
 
@@ -388,7 +403,10 @@ describe('WebhookProcessor.process', () => {
         channelAgents: { whatsapp: 'agent_wpp' },
         insistences: [{ hours: 1 }],
       });
-      (p.forwarder.forward as jest.Mock).mockResolvedValue({ message: 'reply', durationMs: 1 });
+      (p.forwarder.forward as jest.Mock).mockResolvedValue({
+        messages: [{ type: 'text', content: 'reply' }],
+        durationMs: 1,
+      });
       (p.ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 1 });
       (p.insistence.schedule as jest.Mock).mockResolvedValue(undefined);
 
@@ -411,7 +429,10 @@ describe('WebhookProcessor.process', () => {
         channelAgents: { facebook: 'agent_fb' },
         insistences: [{ hours: 1 }],
       });
-      (p.forwarder.forward as jest.Mock).mockResolvedValue({ message: 'reply', durationMs: 1 });
+      (p.forwarder.forward as jest.Mock).mockResolvedValue({
+        messages: [{ type: 'text', content: 'reply' }],
+        durationMs: 1,
+      });
       (p.ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 1 });
       (p.insistence.schedule as jest.Mock).mockResolvedValue(undefined);
 
@@ -450,5 +471,147 @@ describe('WebhookProcessor.process', () => {
     expect(ghl.send).not.toHaveBeenCalled();
     expect(insistence.schedule).not.toHaveBeenCalled();
     expect(result).toEqual({ ok: true, drained: 0 });
+  });
+
+  describe('multi-message fan-out', () => {
+    // Resolve sleep() immediately while still capturing the delay value for
+    // assertions — keeps these tests synchronous-fast without real waits.
+    let setTimeoutSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      setTimeoutSpy = jest
+        .spyOn(global, 'setTimeout')
+        .mockImplementation(((cb: (..._args: unknown[]) => void) => {
+          cb();
+          return 0 as unknown as ReturnType<typeof setTimeout>;
+        }) as unknown as typeof setTimeout);
+    });
+
+    afterEach(() => {
+      setTimeoutSpy.mockRestore();
+    });
+
+    function setupHappyDeps(p: ReturnType<typeof makeProcessor>) {
+      (p.debouncer.drain as jest.Mock).mockResolvedValue(sampleItems);
+      (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({
+        apiKey: 'pit-loc-key',
+        insistences: [{ hours: 0, minutes: 10 }],
+      });
+      (p.insistence.schedule as jest.Mock).mockResolvedValue(undefined);
+    }
+
+    it('sends each chat message as a separate GHL call in order', async () => {
+      const p = makeProcessor();
+      setupHappyDeps(p);
+      (p.forwarder.forward as jest.Mock).mockResolvedValue({
+        messages: [
+          { type: 'text', content: 'Encontré 3 opciones para vos.' },
+          { type: 'image', url: 'https://cdn.app.com/img1.jpg', caption: 'Modelo A' },
+          { type: 'text', content: 'Este tiene mejor batería.' },
+          { type: 'file', url: 'https://cdn.app.com/specs.pdf', filename: 'specs.pdf' },
+        ],
+        durationMs: 5,
+      });
+      (p.ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 3 });
+
+      await p.processor.process(makeJob());
+
+      expect(p.ghl.send).toHaveBeenCalledTimes(4);
+      const calls = (p.ghl.send as jest.Mock).mock.calls.map((c) => c[0]);
+      expect(calls[0]).toMatchObject({
+        message: 'Encontré 3 opciones para vos.',
+        type: 'WhatsApp',
+        attachments: undefined,
+      });
+      expect(calls[1]).toMatchObject({
+        message: 'Modelo A',
+        attachments: ['https://cdn.app.com/img1.jpg'],
+      });
+      expect(calls[2]).toMatchObject({
+        message: 'Este tiene mejor batería.',
+        attachments: undefined,
+      });
+      expect(calls[3]).toMatchObject({
+        message: '',
+        attachments: ['https://cdn.app.com/specs.pdf'],
+      });
+    });
+
+    it('waits 2500ms between consecutive sends (N-1 gaps for N messages)', async () => {
+      const p = makeProcessor();
+      setupHappyDeps(p);
+      (p.forwarder.forward as jest.Mock).mockResolvedValue({
+        messages: [
+          { type: 'text', content: 'a' },
+          { type: 'text', content: 'b' },
+          { type: 'text', content: 'c' },
+        ],
+        durationMs: 5,
+      });
+      (p.ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 1 });
+
+      await p.processor.process(makeJob());
+
+      const delays = setTimeoutSpy.mock.calls.map((c) => c[1]);
+      expect(delays).toEqual([2500, 2500]);
+    });
+
+    it('does not delay before the first send for a single-message reply', async () => {
+      const p = makeProcessor();
+      setupHappyDeps(p);
+      (p.forwarder.forward as jest.Mock).mockResolvedValue({
+        messages: [{ type: 'text', content: 'solo' }],
+        durationMs: 5,
+      });
+      (p.ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 1 });
+
+      await p.processor.process(makeJob());
+
+      expect(setTimeoutSpy).not.toHaveBeenCalled();
+      expect(p.ghl.send).toHaveBeenCalledTimes(1);
+    });
+
+    it('continues after a mid-sequence send failure and still schedules insistence', async () => {
+      const p = makeProcessor();
+      setupHappyDeps(p);
+      (p.forwarder.forward as jest.Mock).mockResolvedValue({
+        messages: [
+          { type: 'text', content: 'one' },
+          { type: 'text', content: 'two' },
+          { type: 'text', content: 'three' },
+        ],
+        durationMs: 5,
+      });
+      (p.ghl.send as jest.Mock)
+        .mockResolvedValueOnce({ status: 200, durationMs: 1 })
+        .mockRejectedValueOnce(new Error('GHL returned 500'))
+        .mockResolvedValueOnce({ status: 200, durationMs: 1 });
+
+      const result = await p.processor.process(makeJob());
+
+      expect(p.ghl.send).toHaveBeenCalledTimes(3);
+      expect(p.insistence.schedule).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({ ok: true, drained: 1, ghlStatus: 200 });
+    });
+
+    it('skips insistence scheduling when every send fails', async () => {
+      const p = makeProcessor();
+      setupHappyDeps(p);
+      (p.forwarder.forward as jest.Mock).mockResolvedValue({
+        messages: [
+          { type: 'text', content: 'one' },
+          { type: 'text', content: 'two' },
+        ],
+        durationMs: 5,
+      });
+      (p.ghl.send as jest.Mock).mockRejectedValue(new Error('GHL returned 500'));
+
+      const result = await p.processor.process(makeJob());
+
+      expect(p.ghl.send).toHaveBeenCalledTimes(2);
+      expect(p.insistence.schedule).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ ok: true, drained: 1 });
+      expect(result).not.toHaveProperty('ghlStatus', 200);
+    });
   });
 });

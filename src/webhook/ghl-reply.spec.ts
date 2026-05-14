@@ -70,6 +70,34 @@ describe('GhlReply', () => {
     expect(result.status).toBe(201);
   });
 
+  it('includes attachments in the body when provided', async () => {
+    const { ghl, post } = makeGhl();
+    post.mockResolvedValue({ status: 201, data: { ok: true } });
+
+    await ghl.send({
+      ...baseInput,
+      attachments: ['https://cdn.app.com/img1.jpg'],
+    });
+
+    const [, body] = post.mock.calls[0];
+    expect(body).toEqual({
+      contactId: 'c-1',
+      message: 'Hola',
+      type: 'WhatsApp',
+      attachments: ['https://cdn.app.com/img1.jpg'],
+    });
+  });
+
+  it('omits attachments from the body when the array is empty', async () => {
+    const { ghl, post } = makeGhl();
+    post.mockResolvedValue({ status: 201, data: { ok: true } });
+
+    await ghl.send({ ...baseInput, attachments: [] });
+
+    const [, body] = post.mock.calls[0];
+    expect(body).not.toHaveProperty('attachments');
+  });
+
   it('uses a different Bearer token for a different apiKey', async () => {
     const { ghl, post } = makeGhl();
     post.mockResolvedValue({ status: 201, data: {} });
