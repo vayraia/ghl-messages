@@ -105,7 +105,13 @@ export class WebhookForwarder {
         );
       }
       this.logger.log(
-        { jobId: req.jobId, status, durationMs, count: messages.length },
+        {
+          jobId: req.jobId,
+          status,
+          durationMs,
+          count: messages.length,
+          messages: summarizeBody(messages),
+        },
         'Chat API replied',
       );
       return { messages, durationMs };
