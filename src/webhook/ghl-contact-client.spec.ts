@@ -45,11 +45,12 @@ describe('GhlContactClient', () => {
   });
 
   describe('get', () => {
-    it('GETs /contacts/:id with bearer auth and returns customFields (top-level shape)', async () => {
+    it('GETs /contacts/:id with bearer auth and returns customFields + firstName (top-level shape)', async () => {
       const { client, get } = makeClient();
       get.mockResolvedValue({
         status: 200,
         data: {
+          firstName: 'Fabio',
           customFields: [
             { id: 'cf_1', value: 'Enabled' },
             { id: 'cf_2', value: 'Foo' },
@@ -67,18 +68,49 @@ describe('GhlContactClient', () => {
         { id: 'cf_1', value: 'Enabled' },
         { id: 'cf_2', value: 'Foo' },
       ]);
+      expect(result.firstName).toBe('Fabio');
     });
 
-    it('extracts customFields from nested contact wrapper', async () => {
+    it('extracts customFields + firstName from nested contact wrapper', async () => {
       const { client, get } = makeClient();
       get.mockResolvedValue({
         status: 200,
-        data: { contact: { customFields: [{ id: 'cf_1', value: 'X' }] } },
+        data: {
+          contact: {
+            firstName: 'Fabio',
+            customFields: [{ id: 'cf_1', value: 'X' }],
+          },
+        },
       });
 
       const result = await client.get({ jobId: 'j', contactId: 'c_1', apiKey: 'sk' });
 
       expect(result.customFields).toEqual([{ id: 'cf_1', value: 'X' }]);
+      expect(result.firstName).toBe('Fabio');
+    });
+
+    it('trims firstName whitespace and returns undefined when blank', async () => {
+      const { client, get } = makeClient();
+      get.mockResolvedValueOnce({
+        status: 200,
+        data: { firstName: '  Fabio  ', customFields: [] },
+      });
+      get.mockResolvedValueOnce({
+        status: 200,
+        data: { firstName: '   ', customFields: [] },
+      });
+      get.mockResolvedValueOnce({
+        status: 200,
+        data: { customFields: [] },
+      });
+
+      const trimmed = await client.get({ jobId: 'j', contactId: 'c_1', apiKey: 'sk' });
+      const blank = await client.get({ jobId: 'j', contactId: 'c_2', apiKey: 'sk' });
+      const missing = await client.get({ jobId: 'j', contactId: 'c_3', apiKey: 'sk' });
+
+      expect(trimmed.firstName).toBe('Fabio');
+      expect(blank.firstName).toBeUndefined();
+      expect(missing.firstName).toBeUndefined();
     });
 
     it('returns customFields=[] when shape is unexpected', async () => {

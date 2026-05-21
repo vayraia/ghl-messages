@@ -28,6 +28,8 @@ const baseReq: ChatRequest = {
   jobId: 'job-1',
   agentId: 'ventas',
   contactId: 'c-1',
+  locationId: 'loc_abc',
+  apiKey: 'pit-xxx',
   body: 'hola\nbuen día',
   receivedAt: '2026-04-28T00:00:00.000Z',
   requestId: 'req-1',
@@ -68,7 +70,7 @@ describe('WebhookForwarder', () => {
     expect(body).toEqual({
       agent_id: 'ventas',
       contact_id: 'c-1',
-      contact_data: {},
+      contact_data: { ghl_token: 'pit-xxx', location_id: 'loc_abc' },
       message: { body: 'hola\nbuen día' },
     });
     expect(opts.headers).toMatchObject({
@@ -93,7 +95,11 @@ describe('WebhookForwarder', () => {
     expect(body).toEqual({
       agent_id: 'ventas',
       contact_id: 'c-1',
-      contact_data: { name: 'Fabio Coronado' },
+      contact_data: {
+        ghl_token: 'pit-xxx',
+        location_id: 'loc_abc',
+        name: 'Fabio Coronado',
+      },
       message: { body: 'hola\nbuen día' },
     });
   });
@@ -131,7 +137,7 @@ describe('WebhookForwarder', () => {
     expect(body.message).not.toHaveProperty('attachments');
   });
 
-  it('keeps contact_data empty when contactName is absent', async () => {
+  it('omits contact_data.name when contactName is absent but keeps token + location', async () => {
     const { forwarder, post } = makeForwarder();
     post.mockResolvedValue({
       status: 200,
@@ -141,7 +147,11 @@ describe('WebhookForwarder', () => {
     await forwarder.forward(baseReq);
 
     const [, body] = post.mock.calls[0];
-    expect(body.contact_data).toEqual({});
+    expect(body.contact_data).toEqual({
+      ghl_token: 'pit-xxx',
+      location_id: 'loc_abc',
+    });
+    expect(body.contact_data).not.toHaveProperty('name');
   });
 
   it('parses a multi-message reply preserving order and per-type fields', async () => {

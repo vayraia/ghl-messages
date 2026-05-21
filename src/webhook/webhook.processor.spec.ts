@@ -20,7 +20,7 @@ function makeProcessor() {
     cancel: jest.fn(),
   } as unknown as InsistenceClient;
   const contactClient = {
-    get: jest.fn(),
+    get: jest.fn().mockResolvedValue({ status: 200, customFields: [], firstName: undefined }),
     disableAiField: jest.fn(),
   } as unknown as GhlContactClient;
   const config = {
@@ -88,6 +88,14 @@ describe('WebhookProcessor.process', () => {
     const result = await processor.process(makeJob());
 
     expect(groupFetcher.fetch).toHaveBeenCalledWith('loc_abc', 'job-1');
+    expect(forwarder.forward).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: 'ventas',
+        contactId: 'c1',
+        locationId: 'loc_abc',
+        apiKey: 'pit-loc-key',
+      }),
+    );
     expect(ghl.send).toHaveBeenCalledWith({
       jobId: 'job-1',
       contactId: 'c1',
@@ -194,16 +202,44 @@ describe('WebhookProcessor.process', () => {
       (p.insistence.schedule as jest.Mock).mockResolvedValue(undefined);
     }
 
-    it('skips the gate when the group has no aiFieldId configured', async () => {
+    it('still fetches the contact when there is no aiFieldId (for firstName)', async () => {
       const p = makeProcessor();
       setupHappyPathMocks(p);
       (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({ apiKey: 'k' });
+      (p.contactClient.get as jest.Mock).mockResolvedValue({
+        status: 200,
+        customFields: [],
+        firstName: 'Fabio',
+      });
 
       await p.processor.process(makeJob());
 
-      expect(p.contactClient.get).not.toHaveBeenCalled();
-      expect(p.forwarder.forward).toHaveBeenCalled();
+      expect(p.contactClient.get).toHaveBeenCalledWith({
+        jobId: 'job-1',
+        contactId: 'c1',
+        apiKey: 'k',
+      });
+      expect(p.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({ contactName: 'Fabio' }),
+      );
       expect(p.ghl.send).toHaveBeenCalled();
+    });
+
+    it('forwards undefined contactName when the contact has no firstName', async () => {
+      const p = makeProcessor();
+      setupHappyPathMocks(p);
+      (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({ apiKey: 'k' });
+      (p.contactClient.get as jest.Mock).mockResolvedValue({
+        status: 200,
+        customFields: [],
+        firstName: undefined,
+      });
+
+      await p.processor.process(makeJob());
+
+      expect(p.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({ contactName: undefined }),
+      );
     });
 
     it('continues the flow when the ai_field is "Enabled"', async () => {

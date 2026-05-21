@@ -53,9 +53,7 @@ x-webhook-secret: <secret-from-WEBHOOK_SECRET>
 | `customData.channel`                        | string | no       | Hint for `replyChannel`                                      |
 | `contact.lastAttributionSource.medium`      | string | no       | Highest-priority `replyChannel` hint                          |
 | `contact.attributionSource.medium`          | string | no       | Second-priority `replyChannel` hint                           |
-| `name`                                      | string | no       | Highest-priority source for `contact_data.name` in `/chat`   |
-| `full_name`                                 | string | no       | Second-priority source for `contact_data.name`               |
-| `first_name`, `last_name`                   | string | no       | Joined as `"first last"` when `name`/`full_name` are absent  |
+| `name`, `full_name`, `first_name`, `last_name` | string | no    | Accepted for backward compat — ignored. `contact_data.name` is now sourced from `GET /contacts/{id}` (`firstName`) |
 | `event`, `id`, `data`                       | any    | no       | Pass-through metadata, kept for future expansion             |
 
 ¹ At least one of `message.body` / `customData.message` must yield
@@ -151,7 +149,11 @@ x-request-id: <uuid>
 {
   "agent_id": "ventas",
   "contact_id": "c1",
-  "contact_data": { "name": "Fabio Coronado" },
+  "contact_data": {
+    "ghl_token": "pit-...",
+    "location_id": "loc_...",
+    "name": "Fabio"
+  },
   "message": { "body": "hola\nbuen día\nquiero info" }
 }
 ```
@@ -173,9 +175,10 @@ GHL  ──POST──►  /v1/webhook
                                                 ▼
                                   WebhookProcessor.process
                                           ├─ drain Redis list (LRANGE + DEL atomic)
+                                          ├─ GET  $GHL_API_BASE_URL/contacts/{id}   (firstName + custom fields)
                                           ├─ POST $CHAT_API_URL/chat
-                                          │     body: { agent_id, contact_id, contact_data: { name? }, message: { body } }
-                                          │     → expects { message: string }
+                                          │     body: { agent_id, contact_id, contact_data: { ghl_token, location_id, name? }, message: { body } }
+                                          │     → expects { messages: [...] }
                                           └─ POST $GHL_API_BASE_URL/conversations/messages
                                                 Authorization: Bearer $GHL_API_KEY
                                                 Version:       $GHL_API_VERSION
@@ -190,16 +193,26 @@ The forwarder POSTs:
 {
   "agent_id": "ventas",
   "contact_id": "c_01H...",
-  "contact_data": { "name": "Fabio Coronado" },
+  "contact_data": {
+    "ghl_token": "pit-...",
+    "location_id": "loc_...",
+    "name": "Fabio"
+  },
   "message": { "body": "hola\nbuen día" }
 }
 ```
 
-`contact_data.name` is included only when the inbound webhook supplies a
-non-blank `name`, `full_name`, or `first_name`/`last_name`. When all three
-are absent or blank, `contact_data` is sent as `{}`. When several messages
-collapse into one flush, the **last** message's name wins (mirrors how
-`replyChannel` is resolved).
+`contact_data` always carries `ghl_token` (the location's GHL API key,
+from the group's `api_key`) and `location_id` (the GHL location the
+conversation belongs to). The chat API can use these to call GHL on
+behalf of the location (read fields, create opportunities, etc.).
+
+`contact_data.name` is the contact's `firstName` from
+`GET $GHL_API_BASE_URL/contacts/{id}`. The forwarder fetches the contact
+on every flush (regardless of whether the group has an `ai_field_id`
+gate configured), so the same call serves both the AI toggle and the
+name lookup. When the contact has no `firstName`, `name` is omitted from
+`contact_data`.
 
 Headers added by the forwarder:
 

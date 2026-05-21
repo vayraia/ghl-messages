@@ -9,6 +9,8 @@ export interface ChatRequest {
   jobId: string;
   agentId: string;
   contactId: string;
+  locationId: string;
+  apiKey: string;
   body: string;
   contactName?: string;
   attachments?: string[];
@@ -69,10 +71,18 @@ export class WebhookForwarder {
       message.attachments = req.attachments;
     }
 
+    const contact_data: Record<string, string> = {
+      ghl_token: req.apiKey,
+      location_id: req.locationId,
+    };
+    if (req.contactName) {
+      contact_data.name = req.contactName;
+    }
+
     const body = {
       agent_id: req.agentId,
       contact_id: req.contactId,
-      contact_data: req.contactName ? { name: req.contactName } : {},
+      contact_data,
       message,
     };
 

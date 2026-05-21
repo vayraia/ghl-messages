@@ -35,6 +35,7 @@ export interface ContactCustomField {
 export interface GetContactResult {
   status: number;
   customFields: ContactCustomField[];
+  firstName?: string;
   durationMs: number;
 }
 
@@ -90,6 +91,7 @@ export class GhlContactClient {
 
     if (status >= 200 && status < 300) {
       const customFields = extractCustomFields(response.data);
+      const firstName = extractFirstName(response.data);
       this.logger.debug(
         {
           jobId: input.jobId,
@@ -100,7 +102,7 @@ export class GhlContactClient {
         },
         'GHL contact read',
       );
-      return { status, customFields, durationMs };
+      return { status, customFields, firstName, durationMs };
     }
 
     const summary = summarizeBody(response.data);
@@ -182,6 +184,19 @@ export class GhlContactClient {
  * Tolerates both top-level `customFields` and nested `contact.customFields`
  * shapes, and returns an empty array on any unexpected structure.
  */
+function extractFirstName(data: unknown): string | undefined {
+  if (!data || typeof data !== 'object') return undefined;
+  const root = data as { firstName?: unknown; contact?: { firstName?: unknown } };
+  const raw = typeof root.firstName === 'string'
+    ? root.firstName
+    : typeof root.contact?.firstName === 'string'
+      ? root.contact.firstName
+      : undefined;
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 function extractCustomFields(data: unknown): ContactCustomField[] {
   if (!data || typeof data !== 'object') return [];
   const root = data as { customFields?: unknown; contact?: { customFields?: unknown } };

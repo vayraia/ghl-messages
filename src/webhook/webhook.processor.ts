@@ -76,7 +76,6 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
     const attachments = items.flatMap((i) => i.attachments ?? []);
     const last = items[items.length - 1];
     const replyChannel = last.replyChannel;
-    const contactName = last.contactName;
     // For inbound source the locationId is on job.data (agentId unknown at
     // enqueue time); for workflow source the items carry it.
     const locationId = job.data.locationId ?? last.locationId;
@@ -134,12 +133,13 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
       'Flushing debounced messages',
     );
 
+    const contact = await this.contactClient.get({
+      jobId: String(job.id),
+      contactId,
+      apiKey: group.apiKey,
+    });
+
     if (group.aiFieldId) {
-      const contact = await this.contactClient.get({
-        jobId: String(job.id),
-        contactId,
-        apiKey: group.apiKey,
-      });
       const field = contact.customFields.find((f) => f.id === group.aiFieldId!.id);
       if (field && isAiDisabled(field.value)) {
         this.logger.log(
@@ -165,8 +165,10 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
       jobId: String(job.id),
       agentId,
       contactId,
+      locationId,
+      apiKey: group.apiKey,
       body: concatenated,
-      contactName,
+      contactName: contact.firstName,
       attachments: attachments.length > 0 ? attachments : undefined,
       receivedAt,
       requestId,
