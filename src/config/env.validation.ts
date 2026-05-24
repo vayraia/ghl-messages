@@ -19,6 +19,10 @@ export interface AppEnv {
   DATABASE_URL?: string;
   DATABASE_SSL: boolean;
 
+  GRAPH_API_BASE_URL: string;
+  GRAPH_API_VERSION: string;
+  GRAPH_API_TIMEOUT_MS: number;
+
   THROTTLE_TTL_SECONDS: number;
   THROTTLE_LIMIT: number;
 
@@ -65,6 +69,12 @@ export const envValidationSchema = Joi.object<AppEnv, true>({
     .uri({ scheme: ['postgres', 'postgresql'] })
     .when('META_OUTBOUND_ENABLED', { is: true, then: Joi.required(), otherwise: Joi.optional() }),
   DATABASE_SSL: Joi.boolean().default(false),
+
+  GRAPH_API_BASE_URL: Joi.string()
+    .uri({ scheme: ['http', 'https'] })
+    .default('https://graph.facebook.com'),
+  GRAPH_API_VERSION: Joi.string().default('v21.0'),
+  GRAPH_API_TIMEOUT_MS: Joi.number().integer().min(100).default(10_000),
 
   THROTTLE_TTL_SECONDS: Joi.number().integer().min(1).default(60),
   THROTTLE_LIMIT: Joi.number().integer().min(1).default(600),

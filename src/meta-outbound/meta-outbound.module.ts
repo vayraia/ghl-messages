@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { TokenCipher } from '../common/crypto/token-cipher';
 import { MetaChannel } from './entities/meta-channel.entity';
 import { MetaChannelRepository } from './meta-channel.repository';
+import { WhatsAppCloudClient } from './whatsapp-cloud-client';
 
 /**
  * Outbound Meta (WhatsApp Cloud) sending. Owns the per-tenant credential store.
@@ -14,7 +15,7 @@ import { MetaChannelRepository } from './meta-channel.repository';
  */
 @Module({
   imports: [TypeOrmModule.forFeature([MetaChannel])],
-  providers: [TokenCipher, MetaChannelRepository],
-  exports: [MetaChannelRepository],
+  providers: [TokenCipher, MetaChannelRepository, WhatsAppCloudClient],
+  exports: [MetaChannelRepository, WhatsAppCloudClient],
 })
 export class MetaOutboundModule {}
