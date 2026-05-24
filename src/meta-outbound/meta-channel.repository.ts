@@ -78,6 +78,19 @@ export class MetaChannelRepository {
   }
 
   /**
+   * Resolves a GHL `location_id` to its WhatsApp `phone_number_id` (1:1). Does
+   * NOT decrypt the token — it only routes the send to the right tenant; the
+   * worker fetches the credentials by phone_number_id afterwards.
+   */
+  async findPhoneNumberIdByLocationId(locationId: string): Promise<string | null> {
+    const entity = await this.repo.findOne({
+      where: { locationId },
+      select: { id: true, phoneNumberId: true },
+    });
+    return entity ? entity.phoneNumberId : null;
+  }
+
+  /**
    * Inserts or updates a channel keyed by `phone_number_id`. Intended for
    * seeding / admin tooling (no public endpoint owns this yet). The token is
    * encrypted here; callers pass plaintext.

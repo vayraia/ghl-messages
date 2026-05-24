@@ -152,6 +152,27 @@ describe('MetaChannelRepository', () => {
     });
   });
 
+  describe('findPhoneNumberIdByLocationId (1:1 routing, no decrypt)', () => {
+    it('returns the phone_number_id mapped to a location', async () => {
+      const { sut, repo, cipher } = makeSut();
+      const decrypt = jest.spyOn(cipher, 'decrypt');
+      repo.findOne.mockResolvedValue(makeEntity({ phoneNumberId: '555', locationId: 'loc-9' }));
+
+      expect(await sut.findPhoneNumberIdByLocationId('loc-9')).toBe('555');
+      expect(repo.findOne).toHaveBeenCalledWith({
+        where: { locationId: 'loc-9' },
+        select: { id: true, phoneNumberId: true },
+      });
+      expect(decrypt).not.toHaveBeenCalled();
+    });
+
+    it('returns null when no channel maps to the location', async () => {
+      const { sut, repo } = makeSut();
+      repo.findOne.mockResolvedValue(null);
+      expect(await sut.findPhoneNumberIdByLocationId('nope')).toBeNull();
+    });
+  });
+
   describe('deleteByPhoneNumberId', () => {
     it('returns true when a row was affected', async () => {
       const { sut, repo } = makeSut();

@@ -1,10 +1,11 @@
-import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 import { randomUUID } from 'crypto';
 import { AppEnv } from '../config/env.validation';
+import { MetaChannelRepository } from './meta-channel.repository';
 import {
   META_OUTBOUND_QUEUE_TOKEN,
   META_OUTBOUND_REDIS_CLIENT,
@@ -48,6 +49,7 @@ export class MetaSendService {
   constructor(
     @InjectQueue(META_OUTBOUND_QUEUE_TOKEN) private readonly queue: Queue<MetaSendJobData>,
     @Inject(META_OUTBOUND_REDIS_CLIENT) private readonly redis: Redis,
+    private readonly channels: MetaChannelRepository,
     config: ConfigService<AppEnv, true>,
   ) {
     this.idempotencyTtlSeconds = config.get('IDEMPOTENCY_TTL_SECONDS', { infer: true });
@@ -59,6 +61,8 @@ export class MetaSendService {
     dto: SendWhatsAppDto,
     opts: { idempotencyKey?: string } = {},
   ): Promise<MetaSendResult> {
+    const phoneNumberId = await this.resolvePhoneNumberId(dto);
+
     let body: CloudApiSendBody;
     try {
       body = buildSendBody(dto.to, dto.message as WaOutboundMessage);
@@ -86,11 +90,11 @@ export class MetaSendService {
     // BullMQ rejects custom job IDs containing ':'.
     const jobId = idempotencyKey
       ? `wa_${idempotencyKey.replace(/:/g, '_')}`
-      : `wa_${dto.phoneNumberId}_${Date.now()}-${randomUUID().slice(0, 8)}`;
+      : `wa_${phoneNumberId}_${Date.now()}-${randomUUID().slice(0, 8)}`;
 
     await this.queue.add(
       META_SEND_JOB,
-      { phoneNumberId: dto.phoneNumberId, body },
+      { phoneNumberId, body },
       {
         jobId,
         attempts: this.attempts,
@@ -101,10 +105,29 @@ export class MetaSendService {
     );
 
     this.logger.log(
-      { jobId, phoneNumberId: dto.phoneNumberId, type: body.type },
+      { jobId, phoneNumberId, type: body.type },
       'Outbound WhatsApp message enqueued',
     );
     return { jobId, deduplicated: false };
+  }
+
+  /**
+   * Resolves the target `phone_number_id`. Provide either `phoneNumberId`
+   * (used as-is) or `locationId` (resolved 1:1 via the credential store).
+   * `phoneNumberId` wins if both are present.
+   */
+  private async resolvePhoneNumberId(dto: SendWhatsAppDto): Promise<string> {
+    if (dto.phoneNumberId) return dto.phoneNumberId;
+
+    if (dto.locationId) {
+      const phoneNumberId = await this.channels.findPhoneNumberIdByLocationId(dto.locationId);
+      if (!phoneNumberId) {
+        throw new NotFoundException(`No meta_channel registered for locationId=${dto.locationId}`);
+      }
+      return phoneNumberId;
+    }
+
+    throw new BadRequestException('Either phoneNumberId or locationId is required');
   }
 }
 

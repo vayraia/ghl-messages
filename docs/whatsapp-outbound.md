@@ -22,10 +22,16 @@ it. The actual send happens asynchronously in the worker, so the response is a
 
 | Field            | Type   | Required | Notes                                                        |
 | ---------------- | ------ | -------- | ------------------------------------------------------------ |
-| `phoneNumberId`  | string | yes      | Sender's WhatsApp `phone_number_id`; selects tenant creds    |
+| `phoneNumberId`  | string | one of¹  | Sender's WhatsApp `phone_number_id`; selects tenant creds    |
+| `locationId`     | string | one of¹  | GHL location id; resolved 1:1 to a channel (`404` if unregistered) |
 | `to`             | string | yes      | Recipient phone in international format (digits)             |
 | `message`        | object | yes      | The message — see [message types](#message-types)           |
 | `idempotencyKey` | string | no       | Dedupe key (may also be sent via `x-idempotency-key` header) |
+
+¹ Provide **either** `phoneNumberId` **or** `locationId` as the routing
+selector. If both are present, `phoneNumberId` wins. `locationId` requires a
+channel registered with that `location_id` (a 1:1 partial-unique mapping);
+otherwise the send returns `404`.
 
 Response `202`:
 

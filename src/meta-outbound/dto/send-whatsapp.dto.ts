@@ -12,10 +12,21 @@ import { IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
  * leaves its contents untouched (buttons/sections/etc. survive intact).
  */
 export class SendWhatsAppDto {
-  /** Sender's WhatsApp phone_number_id — selects the tenant credentials. */
+  /**
+   * Routing selector — provide ONE of `phoneNumberId` or `locationId`. If both
+   * are present, `phoneNumberId` wins. `locationId` is resolved 1:1 to a
+   * channel by the service (404 if the location has no registered channel).
+   */
+  @IsOptional()
   @IsString()
   @MaxLength(64)
-  phoneNumberId!: string;
+  phoneNumberId?: string;
+
+  /** GHL location id — alternative to `phoneNumberId` (resolved 1:1). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  locationId?: string;
 
   /** Recipient phone number in international format (digits). */
   @IsString()

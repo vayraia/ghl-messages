@@ -1,24 +1,32 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 import { AppEnv } from '../config/env.validation';
 import { SendWhatsAppDto } from './dto/send-whatsapp.dto';
+import { MetaChannelRepository } from './meta-channel.repository';
 import { META_SEND_JOB } from './meta-outbound.constants';
 import { MetaSendService } from './meta-send.service';
 
 function makeSut() {
   const add = jest.fn().mockResolvedValue({ id: 'x' });
   const set = jest.fn().mockResolvedValue('OK');
+  const findPhoneNumberIdByLocationId = jest.fn();
   const queue = { add } as unknown as Queue;
   const redis = { set } as unknown as Redis;
+  const channels = { findPhoneNumberIdByLocationId } as unknown as MetaChannelRepository;
   const env: Record<string, number> = {
     IDEMPOTENCY_TTL_SECONDS: 3600,
     META_OUTBOUND_JOB_ATTEMPTS: 5,
     META_OUTBOUND_BACKOFF_MS: 2000,
   };
   const config = { get: (k: string) => env[k] } as unknown as ConfigService<AppEnv, true>;
-  return { sut: new MetaSendService(queue, redis, config), add, set };
+  return {
+    sut: new MetaSendService(queue, redis, channels, config),
+    add,
+    set,
+    findPhoneNumberIdByLocationId,
+  };
 }
 
 function dto(
@@ -81,5 +89,47 @@ describe('MetaSendService', () => {
 
     expect(result).toEqual({ jobId: 'evt-1', deduplicated: true });
     expect(add).not.toHaveBeenCalled();
+  });
+
+  it('resolves the phone_number_id from locationId (1:1) and enqueues with it', async () => {
+    const { sut, add, findPhoneNumberIdByLocationId } = makeSut();
+    findPhoneNumberIdByLocationId.mockResolvedValue('999');
+
+    const result = await sut.enqueue(
+      dto({ type: 'text', body: 'hi' }, { phoneNumberId: undefined, locationId: 'loc-1' }),
+    );
+
+    expect(findPhoneNumberIdByLocationId).toHaveBeenCalledWith('loc-1');
+    expect(result.jobId).toMatch(/^wa_999_/);
+    expect(add.mock.calls[0][1]).toMatchObject({ phoneNumberId: '999' });
+  });
+
+  it('throws NotFound when the locationId has no registered channel', async () => {
+    const { sut, add, findPhoneNumberIdByLocationId } = makeSut();
+    findPhoneNumberIdByLocationId.mockResolvedValue(null);
+
+    await expect(
+      sut.enqueue(
+        dto({ type: 'text', body: 'hi' }, { phoneNumberId: undefined, locationId: 'nope' }),
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(add).not.toHaveBeenCalled();
+  });
+
+  it('throws 400 when neither phoneNumberId nor locationId is provided', async () => {
+    const { sut, add } = makeSut();
+    await expect(
+      sut.enqueue(dto({ type: 'text', body: 'hi' }, { phoneNumberId: undefined })),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(add).not.toHaveBeenCalled();
+  });
+
+  it('prefers phoneNumberId over locationId when both are present', async () => {
+    const { sut, add, findPhoneNumberIdByLocationId } = makeSut();
+
+    await sut.enqueue(dto({ type: 'text', body: 'hi' }, { locationId: 'loc-1' }));
+
+    expect(findPhoneNumberIdByLocationId).not.toHaveBeenCalled();
+    expect(add.mock.calls[0][1]).toMatchObject({ phoneNumberId: '123' });
   });
 });

@@ -47,7 +47,9 @@ export class MetaChannel {
   @Column({ name: 'graph_api_version', type: 'text', nullable: true })
   graphApiVersion!: string | null;
 
-  @Index('idx_meta_channels_location_id')
+  // 1:1 with a GHL location: non-null location_ids are unique (partial index),
+  // so a send can be routed by location_id. NULLs are unconstrained.
+  @Index('uq_meta_channels_location_id', { unique: true, where: '"location_id" IS NOT NULL' })
   @Column({ name: 'location_id', type: 'text', nullable: true })
   locationId!: string | null;
 
