@@ -37,6 +37,7 @@ yarn test:cov   # coverage
 - [`docs/architecture.md`](docs/architecture.md) — module layout & request flow
 - [`docs/scalability.md`](docs/scalability.md) — how each tier scales
 - [`docs/webhook-api.md`](docs/webhook-api.md) — endpoint contract & headers
+- [`docs/whatsapp-outbound.md`](docs/whatsapp-outbound.md) — WhatsApp Cloud sending, admin API & roadmap
 - [`docs/deployment.md`](docs/deployment.md) — Docker & Compose deployment
 - [`docs/local-development.md`](docs/local-development.md) — dev loop & env reference
 
