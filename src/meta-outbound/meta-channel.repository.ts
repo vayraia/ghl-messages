@@ -21,6 +21,24 @@ export interface MetaChannelCredentials {
   status: string;
 }
 
+/**
+ * A channel WITHOUT the access token — the safe shape for admin read APIs.
+ * The token is a secret and must never be returned over the wire.
+ */
+export interface MetaChannelSummary {
+  id: string;
+  tenantKey: string;
+  channel: string;
+  phoneNumberId: string;
+  wabaId: string | null;
+  displayPhoneNumber: string | null;
+  graphApiVersion: string | null;
+  locationId: string | null;
+  status: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface UpsertMetaChannelInput {
   tenantKey: string;
   phoneNumberId: string;
@@ -86,6 +104,24 @@ export class MetaChannelRepository {
     return this.toCredentials(saved);
   }
 
+  /** All channels, token omitted. Never decrypts. */
+  async list(): Promise<MetaChannelSummary[]> {
+    const rows = await this.repo.find({ order: { createdAt: 'ASC' } });
+    return rows.map((e) => toSummary(e));
+  }
+
+  /** A single channel by phone_number_id, token omitted. */
+  async findSummaryByPhoneNumberId(phoneNumberId: string): Promise<MetaChannelSummary | null> {
+    const entity = await this.repo.findOne({ where: { phoneNumberId } });
+    return entity ? toSummary(entity) : null;
+  }
+
+  /** Deletes a channel by phone_number_id. Returns false if nothing matched. */
+  async deleteByPhoneNumberId(phoneNumberId: string): Promise<boolean> {
+    const result = await this.repo.delete({ phoneNumberId });
+    return (result.affected ?? 0) > 0;
+  }
+
   private toCredentials(entity: MetaChannel): MetaChannelCredentials {
     let accessToken: string;
     try {
@@ -112,4 +148,20 @@ export class MetaChannelRepository {
       status: entity.status,
     };
   }
+}
+
+function toSummary(entity: MetaChannel): MetaChannelSummary {
+  return {
+    id: entity.id,
+    tenantKey: entity.tenantKey,
+    channel: entity.channel,
+    phoneNumberId: entity.phoneNumberId,
+    wabaId: entity.wabaId,
+    displayPhoneNumber: entity.displayPhoneNumber,
+    graphApiVersion: entity.graphApiVersion,
+    locationId: entity.locationId,
+    status: entity.status,
+    createdAt: entity.createdAt,
+    updatedAt: entity.updatedAt,
+  };
 }

@@ -8,6 +8,8 @@ import { buildRedisOptions } from '../config/redis.config';
 import { TokenCipher } from '../common/crypto/token-cipher';
 import { WebhookSecretGuard } from '../webhook/guards/webhook-secret.guard';
 import { MetaChannel } from './entities/meta-channel.entity';
+import { MetaChannelAdminService } from './meta-channel-admin.service';
+import { MetaChannelController } from './meta-channel.controller';
 import { MetaChannelRepository } from './meta-channel.repository';
 import { META_OUTBOUND_QUEUE_TOKEN, META_OUTBOUND_REDIS_CLIENT } from './meta-outbound.constants';
 import { MetaSendController } from './meta-send.controller';
@@ -46,7 +48,7 @@ class RedisClientLifecycle implements OnApplicationShutdown {
       },
     }),
   ],
-  controllers: [MetaSendController],
+  controllers: [MetaSendController, MetaChannelController],
   providers: [
     {
       provide: META_OUTBOUND_REDIS_CLIENT,
@@ -61,6 +63,7 @@ class RedisClientLifecycle implements OnApplicationShutdown {
     },
     TokenCipher,
     MetaChannelRepository,
+    MetaChannelAdminService,
     WhatsAppCloudClient,
     MetaSendService,
     MetaSendProcessor,

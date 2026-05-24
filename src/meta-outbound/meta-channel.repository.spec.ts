@@ -15,6 +15,8 @@ type RepoMock = {
   findOne: jest.Mock;
   create: jest.Mock;
   save: jest.Mock;
+  find: jest.Mock;
+  delete: jest.Mock;
 };
 
 function makeSut(): { sut: MetaChannelRepository; repo: RepoMock; cipher: TokenCipher } {
@@ -24,6 +26,8 @@ function makeSut(): { sut: MetaChannelRepository; repo: RepoMock; cipher: TokenC
     // TypeORM's create() just builds a plain object from the partial.
     create: jest.fn((partial) => ({ ...partial })),
     save: jest.fn(),
+    find: jest.fn(),
+    delete: jest.fn(),
   };
   const sut = new MetaChannelRepository(repo as unknown as Repository<MetaChannel>, cipher);
   return { sut, repo, cipher };
@@ -123,6 +127,43 @@ describe('MetaChannelRepository', () => {
       const savedArg = repo.save.mock.calls[0][0] as MetaChannel;
       expect(savedArg.wabaId).toBe('keep-me');
       expect(savedArg.status).toBe('disabled');
+    });
+  });
+
+  describe('list / findSummary (token-free, never decrypts)', () => {
+    it('lists summaries without the token and without decrypting', async () => {
+      const { sut, repo, cipher } = makeSut();
+      const decrypt = jest.spyOn(cipher, 'decrypt');
+      repo.find.mockResolvedValue([makeEntity({ accessTokenEnc: 'whatever-ciphertext' })]);
+
+      const summaries = await sut.list();
+
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]).not.toHaveProperty('accessToken');
+      expect(summaries[0]).not.toHaveProperty('accessTokenEnc');
+      expect(summaries[0].phoneNumberId).toBe('123');
+      expect(decrypt).not.toHaveBeenCalled();
+    });
+
+    it('findSummaryByPhoneNumberId returns null when missing', async () => {
+      const { sut, repo } = makeSut();
+      repo.findOne.mockResolvedValue(null);
+      expect(await sut.findSummaryByPhoneNumberId('nope')).toBeNull();
+    });
+  });
+
+  describe('deleteByPhoneNumberId', () => {
+    it('returns true when a row was affected', async () => {
+      const { sut, repo } = makeSut();
+      repo.delete.mockResolvedValue({ affected: 1 });
+      expect(await sut.deleteByPhoneNumberId('123')).toBe(true);
+      expect(repo.delete).toHaveBeenCalledWith({ phoneNumberId: '123' });
+    });
+
+    it('returns false when nothing matched', async () => {
+      const { sut, repo } = makeSut();
+      repo.delete.mockResolvedValue({ affected: 0 });
+      expect(await sut.deleteByPhoneNumberId('nope')).toBe(false);
     });
   });
 });
