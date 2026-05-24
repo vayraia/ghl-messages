@@ -11,6 +11,14 @@ export interface AppEnv {
   META_APP_SECRET: string;
   META_VERIFY_TOKEN: string;
 
+  // Outbound Meta (WhatsApp Cloud) sending. When false (default), the DB and
+  // the outbound module are not wired and the vars below are optional.
+  META_OUTBOUND_ENABLED: boolean;
+  META_TOKEN_ENC_KEY?: string;
+
+  DATABASE_URL?: string;
+  DATABASE_SSL: boolean;
+
   THROTTLE_TTL_SECONDS: number;
   THROTTLE_LIMIT: number;
 
@@ -44,6 +52,19 @@ export const envValidationSchema = Joi.object<AppEnv, true>({
 
   META_APP_SECRET: Joi.string().min(16).required(),
   META_VERIFY_TOKEN: Joi.string().min(8).required(),
+
+  // Feature flag for outbound Meta sending. Gates the DB + outbound module in
+  // app.module.ts; when off (default) the two vars below are not needed.
+  META_OUTBOUND_ENABLED: Joi.boolean().default(false),
+  // 32-byte AES-256-GCM key, base64-encoded. `openssl rand -base64 32`.
+  META_TOKEN_ENC_KEY: Joi.string()
+    .base64()
+    .when('META_OUTBOUND_ENABLED', { is: true, then: Joi.required(), otherwise: Joi.optional() }),
+
+  DATABASE_URL: Joi.string()
+    .uri({ scheme: ['postgres', 'postgresql'] })
+    .when('META_OUTBOUND_ENABLED', { is: true, then: Joi.required(), otherwise: Joi.optional() }),
+  DATABASE_SSL: Joi.boolean().default(false),
 
   THROTTLE_TTL_SECONDS: Joi.number().integer().min(1).default(60),
   THROTTLE_LIMIT: Joi.number().integer().min(1).default(600),

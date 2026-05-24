@@ -5,3 +5,6 @@ process.env.REDIS_URL = 'redis://localhost:6379/0';
 process.env.CHAT_API_URL = 'https://chat.example.com';
 process.env.GHL_API_KEY = 'e2e-test-ghl-api-key';
 process.env.MESSAGE_DEBOUNCE_MS = '10';
+process.env.DATABASE_URL = 'postgres://localhost:5432/ghl_test';
+process.env.DATABASE_SSL = 'false';
+process.env.META_TOKEN_ENC_KEY = Buffer.alloc(32, 7).toString('base64');
