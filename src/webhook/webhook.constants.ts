@@ -1,5 +1,6 @@
 export const WEBHOOK_SECRET_HEADER = 'x-webhook-secret';
 export const WEBHOOK_IDEMPOTENCY_HEADER = 'x-idempotency-key';
+export const META_SIGNATURE_HEADER = 'x-hub-signature-256';
 
 /**
  * Job that drains the per-(agent,contact) Redis list of accumulated message

@@ -8,6 +8,9 @@ export interface AppEnv {
 
   WEBHOOK_SECRET: string;
 
+  META_APP_SECRET: string;
+  META_VERIFY_TOKEN: string;
+
   THROTTLE_TTL_SECONDS: number;
   THROTTLE_LIMIT: number;
 
@@ -38,6 +41,9 @@ export const envValidationSchema = Joi.object<AppEnv, true>({
   BODY_LIMIT: Joi.string().default('1mb'),
 
   WEBHOOK_SECRET: Joi.string().min(16).required(),
+
+  META_APP_SECRET: Joi.string().min(16).required(),
+  META_VERIFY_TOKEN: Joi.string().min(8).required(),
 
   THROTTLE_TTL_SECONDS: Joi.number().integer().min(1).default(60),
   THROTTLE_LIMIT: Joi.number().integer().min(1).default(600),

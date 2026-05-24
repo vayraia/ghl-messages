@@ -6,6 +6,7 @@ import { AppEnv } from '../config/env.validation';
 import { buildRedisOptions } from '../config/redis.config';
 import { WebhookController } from './webhook.controller';
 import { WebhookInboundController } from './webhook-inbound.controller';
+import { WebhookMetaController } from './webhook-meta.controller';
 import { WebhookOutboundController } from './webhook-outbound.controller';
 import { WebhookService } from './webhook.service';
 import { WebhookProcessor } from './webhook.processor';
@@ -15,6 +16,7 @@ import { GhlReply } from './ghl-reply';
 import { GroupFetcher } from './group-fetcher';
 import { InsistenceClient } from './insistence-client';
 import { MessageDebouncer } from './message-debouncer';
+import { MetaSignatureGuard } from './guards/meta-signature.guard';
 import { WebhookSecretGuard } from './guards/webhook-secret.guard';
 import { WEBHOOK_QUEUE_TOKEN, WEBHOOK_REDIS_CLIENT } from './webhook.tokens';
 
@@ -39,7 +41,12 @@ class RedisClientLifecycle implements OnApplicationShutdown {
       },
     }),
   ],
-  controllers: [WebhookController, WebhookInboundController, WebhookOutboundController],
+  controllers: [
+    WebhookController,
+    WebhookInboundController,
+    WebhookMetaController,
+    WebhookOutboundController,
+  ],
   providers: [
     {
       provide: WEBHOOK_REDIS_CLIENT,
@@ -62,6 +69,7 @@ class RedisClientLifecycle implements OnApplicationShutdown {
     InsistenceClient,
     MessageDebouncer,
     WebhookSecretGuard,
+    MetaSignatureGuard,
   ],
   exports: [WebhookService],
 })

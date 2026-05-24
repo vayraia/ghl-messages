@@ -5,8 +5,18 @@ import { Logger } from 'nestjs-pino';
 import compression from 'compression';
 import helmet from 'helmet';
 import { ConfigService } from '@nestjs/config';
+import type { Request } from 'express';
 import { AppModule } from './app.module';
 import { AppEnv } from './config/env.validation';
+
+// Meta webhooks require HMAC-SHA256 over the raw request body. The JSON
+// parser consumes the buffer, so we copy it into `req.rawBody` first via
+// body-parser's `verify` hook. Only the Meta signature guard reads it.
+function captureRawBody(req: Request, _res: unknown, buf: Buffer): void {
+  if (buf?.length) {
+    req.rawBody = Buffer.from(buf);
+  }
+}
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -22,7 +32,7 @@ async function bootstrap(): Promise<void> {
 
   app.use(helmet());
   app.use(compression());
-  app.useBodyParser('json', { limit: bodyLimit });
+  app.useBodyParser('json', { limit: bodyLimit, verify: captureRawBody });
   app.useBodyParser('urlencoded', { extended: true, limit: bodyLimit });
 
   app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' });
