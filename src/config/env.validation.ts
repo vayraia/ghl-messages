@@ -23,6 +23,10 @@ export interface AppEnv {
   GRAPH_API_VERSION: string;
   GRAPH_API_TIMEOUT_MS: number;
 
+  META_OUTBOUND_CONCURRENCY: number;
+  META_OUTBOUND_JOB_ATTEMPTS: number;
+  META_OUTBOUND_BACKOFF_MS: number;
+
   THROTTLE_TTL_SECONDS: number;
   THROTTLE_LIMIT: number;
 
@@ -75,6 +79,10 @@ export const envValidationSchema = Joi.object<AppEnv, true>({
     .default('https://graph.facebook.com'),
   GRAPH_API_VERSION: Joi.string().default('v21.0'),
   GRAPH_API_TIMEOUT_MS: Joi.number().integer().min(100).default(10_000),
+
+  META_OUTBOUND_CONCURRENCY: Joi.number().integer().min(1).default(10),
+  META_OUTBOUND_JOB_ATTEMPTS: Joi.number().integer().min(1).default(5),
+  META_OUTBOUND_BACKOFF_MS: Joi.number().integer().min(0).default(2000),
 
   THROTTLE_TTL_SECONDS: Joi.number().integer().min(1).default(60),
   THROTTLE_LIMIT: Joi.number().integer().min(1).default(600),
