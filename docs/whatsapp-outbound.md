@@ -207,7 +207,64 @@ usable end-to-end as documented above.
 | 3 | **Send status / callback**    | The send is fire-and-forget (202 + jobId, no `wamid` synchronously). Add a status lookup endpoint or a callback/webhook so callers can retrieve the `wamid` and final delivery state. |
 | 4 | **Credential cache**          | `MetaChannelRepository` hits Postgres on every send. Add a short-TTL Redis cache (keyed by `phone_number_id`) with invalidation on admin upsert/delete. |
 | 5 | **Meta Embedded Signup (OAuth)** | Self-serve onboarding: let a customer connect their WABA via Facebook Login, exchange the code for a long-lived token, and fetch `phone_number_id` / WABA id via the Graph API — instead of pasting a token into `POST /v1/meta-channels`. The existing `/v1/oauth/callback` stub is the seam. |
-| 6 | **Generalize to Messenger / Instagram** | Reuse the `tenantKey` (`page:` / `ig:`) + the same queue/client pattern to send via the Messenger Send API and Instagram Messaging (quick replies, generic/button templates). |
+| 6 | **Generalize to Messenger / Instagram** | Send via the Messenger Send API and Instagram Messaging, reusing the `tenantKey` (`page:` / `ig:`) and the queue/worker plumbing. See [the dedicated section below](#extending-to-messenger--instagram-follow-up-6) for the full analysis. |
+
+### Extending to Messenger & Instagram (follow-up #6)
+
+Feasible, and the architecture was built with it in mind — but it is **not a
+flag flip**. Roughly **60–70% (the plumbing) is reusable; 30–40% (per-channel
+domain/mapper/client + a credential-schema generalization) is new and
+non-trivial**, mostly because message types and the messaging window differ per
+channel.
+
+**Reusable as-is**
+
+- `tenantKey` already uses the `page:<id>` / `ig:<id>` / `wa:<phone_number_id>`
+  scheme (defined by the inbound `meta-tenant.ts`), so multi-channel routing has
+  its key.
+- `meta_channels` already has a `channel` column (today always `whatsapp`).
+- The BullMQ queue + worker, retry/error classification, idempotency, the
+  endpoint → service → processor shape, and the axios-client pattern are all
+  channel-agnostic.
+- The inbound webhook already captures all three channels.
+
+**New work per channel**
+
+1. **Different API.** Messenger/IG use the **Send API**
+   (`POST /{version}/{page_id}/messages` with `recipient: { id: <PSID> }`), not
+   WhatsApp's `/{phone_number_id}/messages`. Different endpoint and body.
+2. **Different recipient.** WhatsApp = phone number (`to`); Messenger = **PSID**,
+   Instagram = **IGSID** (page-scoped ids, not phone numbers).
+3. **Different credentials / schema.** Messenger/IG use a **Page Access Token**
+   keyed by `page_id` / `ig_id`. The table is currently WhatsApp-shaped
+   (`phone_number_id UNIQUE`); it needs generalizing (a generic `external_id`,
+   or `page_id`/`ig_id` columns, with `channel` discriminating).
+4. **Message types do not map 1:1:**
+
+   |                | WhatsApp Cloud        | Messenger                   | Instagram             |
+   | -------------- | --------------------- | --------------------------- | --------------------- |
+   | Text / media   | ✅                    | ✅                          | ✅                    |
+   | Buttons        | interactive (≤3)      | button template (≤3)        | limited               |
+   | Quick replies  | ❌                    | ✅ (≤13)                    | ✅                    |
+   | Lists          | interactive list (≤10)| ❌ (use carousel/generic)   | ❌                    |
+   | Carousel       | ❌                    | generic template            | generic (constrained) |
+   | Outside 24h    | approved template     | message tags                | human agent tag       |
+
+   So `WaOutboundMessage` does not transfer directly — each channel needs its own
+   mapper + validation, and WhatsApp interactive **lists have no direct
+   Messenger/IG equivalent**.
+
+**Suggested design**
+
+- A `ChannelSender` strategy interface (`send(creds, to, message)`), with
+  `WhatsAppCloudClient` as the first implementation; add `MessengerSendClient`
+  and `InstagramSendClient`. The processor picks the sender from `channel`
+  (derived from the `tenantKey`).
+- Generalize the credential store to key by `page_id` / `ig_id` as well as
+  `phone_number_id`.
+- Prefer a shared core (text / media / quick-replies) plus per-channel
+  extensions over a single "universal" message type — a universal type collapses
+  to the lowest common denominator and loses buttons/lists.
 
 ### Operational notes / known gaps
 
