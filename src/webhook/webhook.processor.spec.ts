@@ -21,6 +21,7 @@ function makeProcessor() {
   } as unknown as InsistenceClient;
   const contactClient = {
     get: jest.fn().mockResolvedValue({ status: 200, customFields: [], firstName: undefined }),
+    listCustomFields: jest.fn().mockResolvedValue(new Map<string, string>()),
     disableAiField: jest.fn(),
   } as unknown as GhlContactClient;
   const config = {
@@ -352,6 +353,104 @@ describe('WebhookProcessor.process', () => {
 
       await expect(p.processor.process(makeJob())).rejects.toThrow(/503/);
       expect(p.forwarder.forward).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('custom field resolution', () => {
+    function setupHappyPathMocks(p: ReturnType<typeof makeProcessor>) {
+      (p.debouncer.drain as jest.Mock).mockResolvedValue(sampleItems);
+      (p.forwarder.forward as jest.Mock).mockResolvedValue({
+        messages: [{ type: 'text', content: 'reply' }],
+        durationMs: 1,
+      });
+      (p.ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 1 });
+      (p.insistence.schedule as jest.Mock).mockResolvedValue(undefined);
+      (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({ apiKey: 'k' });
+    }
+
+    it('resolves contact custom fields to name→value and forwards them', async () => {
+      const p = makeProcessor();
+      setupHappyPathMocks(p);
+      (p.contactClient.get as jest.Mock).mockResolvedValue({
+        status: 200,
+        customFields: [
+          { id: 'cf_1', value: 'Juan' },
+          { id: 'cf_2', value: 'Premium' },
+        ],
+      });
+      (p.contactClient.listCustomFields as jest.Mock).mockResolvedValue(
+        new Map([
+          ['cf_1', 'Nombre Cliente'],
+          ['cf_2', 'Plan'],
+        ]),
+      );
+
+      await p.processor.process(makeJob());
+
+      expect(p.contactClient.listCustomFields).toHaveBeenCalledWith({
+        jobId: 'job-1',
+        locationId: 'loc_abc',
+        apiKey: 'k',
+      });
+      expect(p.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customFields: { 'Nombre Cliente': 'Juan', Plan: 'Premium' },
+        }),
+      );
+    });
+
+    it('skips the lookup and forwards undefined when the contact has no custom fields', async () => {
+      const p = makeProcessor();
+      setupHappyPathMocks(p);
+      (p.contactClient.get as jest.Mock).mockResolvedValue({
+        status: 200,
+        customFields: [],
+      });
+
+      await p.processor.process(makeJob());
+
+      expect(p.contactClient.listCustomFields).not.toHaveBeenCalled();
+      expect(p.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({ customFields: undefined }),
+      );
+    });
+
+    it('forwards undefined when no field id matches a definition', async () => {
+      const p = makeProcessor();
+      setupHappyPathMocks(p);
+      (p.contactClient.get as jest.Mock).mockResolvedValue({
+        status: 200,
+        customFields: [{ id: 'cf_unknown', value: 'x' }],
+      });
+      (p.contactClient.listCustomFields as jest.Mock).mockResolvedValue(
+        new Map([['cf_1', 'Nombre']]),
+      );
+
+      await p.processor.process(makeJob());
+
+      expect(p.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({ customFields: undefined }),
+      );
+    });
+
+    it('degrades gracefully and still forwards when the lookup throws', async () => {
+      const p = makeProcessor();
+      setupHappyPathMocks(p);
+      (p.contactClient.get as jest.Mock).mockResolvedValue({
+        status: 200,
+        customFields: [{ id: 'cf_1', value: 'Juan' }],
+      });
+      (p.contactClient.listCustomFields as jest.Mock).mockRejectedValue(
+        new Error('custom fields GET 503'),
+      );
+
+      const result = await p.processor.process(makeJob());
+
+      expect(p.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({ customFields: undefined }),
+      );
+      expect(p.ghl.send).toHaveBeenCalled();
+      expect(result).toMatchObject({ ok: true });
     });
   });
 

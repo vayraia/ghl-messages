@@ -1,7 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosError } from 'axios';
 import { UnrecoverableError } from 'bullmq';
-import { GhlContactClient } from './ghl-contact-client';
+import { GhlContactClient, buildNamedCustomFields } from './ghl-contact-client';
 import { AppEnv } from '../config/env.validation';
 
 jest.mock('axios');
@@ -258,6 +258,186 @@ describe('GhlContactClient', () => {
       expect(err).toBeInstanceOf(Error);
       expect(err).not.toBeInstanceOf(UnrecoverableError);
       expect(err.message).toMatch(/ECONNREFUSED/);
+    });
+  });
+
+  describe('listCustomFields', () => {
+    it('GETs /locations/:id/customFields with bearer auth and returns an id→name map', async () => {
+      const { client, get } = makeClient();
+      get.mockResolvedValue({
+        status: 200,
+        data: {
+          customFields: [
+            { id: 'cf_1', name: 'Nombre Cliente', fieldKey: 'contact.nombre' },
+            { id: 'cf_2', name: 'Plan', fieldKey: 'contact.plan' },
+          ],
+        },
+      });
+
+      const defs = await client.listCustomFields({
+        jobId: 'j',
+        locationId: 'loc_1',
+        apiKey: 'pit-xxx',
+      });
+
+      expect(get).toHaveBeenCalledWith('/locations/loc_1/customFields', {
+        headers: { Authorization: 'Bearer pit-xxx' },
+      });
+      expect(defs.get('cf_1')).toBe('Nombre Cliente');
+      expect(defs.get('cf_2')).toBe('Plan');
+      expect(defs.size).toBe(2);
+    });
+
+    it('trims names and skips entries without a string id or non-blank name', async () => {
+      const { client, get } = makeClient();
+      get.mockResolvedValue({
+        status: 200,
+        data: {
+          customFields: [
+            { id: 'cf_1', name: '  Plan  ' },
+            { id: 'cf_2', name: '   ' },
+            { id: 42, name: 'numeric id' },
+            { name: 'no id' },
+            null,
+          ],
+        },
+      });
+
+      const defs = await client.listCustomFields({ jobId: 'j', locationId: 'loc_1', apiKey: 'k' });
+
+      expect(defs.size).toBe(1);
+      expect(defs.get('cf_1')).toBe('Plan');
+    });
+
+    it('caches per location and does not re-fetch within the TTL', async () => {
+      const { client, get } = makeClient();
+      get.mockResolvedValue({
+        status: 200,
+        data: { customFields: [{ id: 'cf_1', name: 'Plan' }] },
+      });
+
+      await client.listCustomFields({ jobId: 'j', locationId: 'loc_1', apiKey: 'k' });
+      await client.listCustomFields({ jobId: 'j', locationId: 'loc_1', apiKey: 'k' });
+
+      expect(get).toHaveBeenCalledTimes(1);
+    });
+
+    it('encodes special characters in the locationId path segment', async () => {
+      const { client, get } = makeClient();
+      get.mockResolvedValue({ status: 200, data: { customFields: [] } });
+
+      await client.listCustomFields({ jobId: 'j', locationId: 'loc/x y', apiKey: 'k' });
+
+      expect(get.mock.calls[0][0]).toBe('/locations/loc%2Fx%20y/customFields');
+    });
+
+    it('throws UnrecoverableError on 4xx', async () => {
+      const { client, get } = makeClient();
+      get.mockResolvedValue({ status: 401, data: { error: 'unauthorized' } });
+
+      await expect(
+        client.listCustomFields({ jobId: 'j', locationId: 'loc_1', apiKey: 'k' }),
+      ).rejects.toBeInstanceOf(UnrecoverableError);
+    });
+
+    it('throws a regular Error on 5xx (retryable)', async () => {
+      const { client, get } = makeClient();
+      get.mockResolvedValue({ status: 503, data: 'down' });
+
+      const err = await client
+        .listCustomFields({ jobId: 'j', locationId: 'loc_1', apiKey: 'k' })
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(Error);
+      expect(err).not.toBeInstanceOf(UnrecoverableError);
+      expect(err.message).toMatch(/503/);
+    });
+
+    it('throws a regular Error on transport failure (retryable)', async () => {
+      const { client, get } = makeClient();
+      const transport = new Error('connect ETIMEDOUT') as AxiosError;
+      transport.code = 'ETIMEDOUT';
+      get.mockRejectedValue(transport);
+
+      const err = await client
+        .listCustomFields({ jobId: 'j', locationId: 'loc_1', apiKey: 'k' })
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(Error);
+      expect(err).not.toBeInstanceOf(UnrecoverableError);
+      expect(err.message).toMatch(/ETIMEDOUT/);
+    });
+  });
+
+  describe('buildNamedCustomFields', () => {
+    const defs = new Map([
+      ['cf_1', 'Nombre Cliente'],
+      ['cf_2', 'Plan'],
+      ['cf_3', 'Edad'],
+      ['cf_4', 'Activo'],
+      ['cf_5', 'Intereses'],
+    ]);
+
+    it('joins values with names and drops fields with no definition', () => {
+      const out = buildNamedCustomFields(
+        [
+          { id: 'cf_1', value: 'Juan' },
+          { id: 'cf_2', value: 'Premium' },
+          { id: 'cf_unknown', value: 'ignored' },
+        ],
+        defs,
+      );
+
+      expect(out).toEqual({ 'Nombre Cliente': 'Juan', Plan: 'Premium' });
+    });
+
+    it('normalizes numbers, booleans and arrays; trims strings; drops empties', () => {
+      const out = buildNamedCustomFields(
+        [
+          { id: 'cf_1', value: '  Juan  ' },
+          { id: 'cf_2', value: '' },
+          { id: 'cf_3', value: 30 },
+          { id: 'cf_4', value: true },
+          { id: 'cf_5', value: ['rock', 'jazz'] },
+        ],
+        defs,
+      );
+
+      expect(out).toEqual({
+        'Nombre Cliente': 'Juan',
+        Edad: '30',
+        Activo: 'true',
+        Intereses: 'rock, jazz',
+      });
+    });
+
+    it('drops object/null values that would not stringify meaningfully', () => {
+      const out = buildNamedCustomFields(
+        [
+          { id: 'cf_1', value: null },
+          { id: 'cf_2', value: { a: 1 } },
+          { id: 'cf_3', value: undefined },
+        ],
+        defs,
+      );
+
+      expect(out).toEqual({});
+    });
+
+    it('last write wins on duplicate names', () => {
+      const dupDefs = new Map([
+        ['cf_1', 'Plan'],
+        ['cf_2', 'Plan'],
+      ]);
+      const out = buildNamedCustomFields(
+        [
+          { id: 'cf_1', value: 'Basic' },
+          { id: 'cf_2', value: 'Premium' },
+        ],
+        dupDefs,
+      );
+
+      expect(out).toEqual({ Plan: 'Premium' });
     });
   });
 });

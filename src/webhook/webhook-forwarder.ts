@@ -13,6 +13,7 @@ export interface ChatRequest {
   apiKey: string;
   body: string;
   contactName?: string;
+  customFields?: Record<string, string>;
   attachments?: string[];
   receivedAt: string;
   requestId: string | undefined;
@@ -71,10 +72,16 @@ export class WebhookForwarder {
       message.attachments = req.attachments;
     }
 
-    const contact_data: Record<string, string> = {
-      ghl_token: req.apiKey,
-      location_id: req.locationId,
-    };
+    // Custom fields are spread directly into contact_data (by their GHL name,
+    // e.g. "Reprogramar Cita"). The reserved keys (ghl_token, location_id,
+    // name) are assigned AFTER the spread so a custom field can never shadow
+    // them.
+    const contact_data: Record<string, string> = {};
+    if (req.customFields) {
+      Object.assign(contact_data, req.customFields);
+    }
+    contact_data.ghl_token = req.apiKey;
+    contact_data.location_id = req.locationId;
     if (req.contactName) {
       contact_data.name = req.contactName;
     }

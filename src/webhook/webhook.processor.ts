@@ -5,7 +5,7 @@ import { Job, UnrecoverableError } from 'bullmq';
 import { AppEnv } from '../config/env.validation';
 import { resolveAgentForChannel } from './channel-resolver';
 import { ChatMessage, WebhookForwarder } from './webhook-forwarder';
-import { GhlContactClient } from './ghl-contact-client';
+import { GhlContactClient, buildNamedCustomFields } from './ghl-contact-client';
 import { GhlReply } from './ghl-reply';
 import { GroupFetcher } from './group-fetcher';
 import { InsistenceClient } from './insistence-client';
@@ -161,6 +161,29 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
       }
     }
 
+    // Resolve the contact's custom fields (id → value) into named pairs
+    // (name → value) for the chat API. Best-effort: if the definitions can't
+    // be fetched we forward without `custom_fields` rather than fail the job.
+    let customFields: Record<string, string> | undefined;
+    if (contact.customFields.length > 0) {
+      try {
+        const defs = await this.contactClient.listCustomFields({
+          jobId: String(job.id),
+          locationId,
+          apiKey: group.apiKey,
+        });
+        const named = buildNamedCustomFields(contact.customFields, defs);
+        if (Object.keys(named).length > 0) {
+          customFields = named;
+        }
+      } catch (err) {
+        this.logger.warn(
+          { jobId: job.id, locationId, contactId, err: (err as Error).message },
+          'Custom field name resolution failed — forwarding without custom_fields',
+        );
+      }
+    }
+
     const chat = await this.forwarder.forward({
       jobId: String(job.id),
       agentId,
@@ -169,6 +192,7 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
       apiKey: group.apiKey,
       body: concatenated,
       contactName: contact.firstName,
+      customFields,
       attachments: attachments.length > 0 ? attachments : undefined,
       receivedAt,
       requestId,
