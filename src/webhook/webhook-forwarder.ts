@@ -4,6 +4,7 @@ import axios, { AxiosError, AxiosInstance } from 'axios';
 import { UnrecoverableError } from 'bullmq';
 import { AppEnv } from '../config/env.validation';
 import { REQUEST_ID_HEADER } from '../common/middleware/request-id.middleware';
+import { NamedCustomField } from './ghl-contact-client';
 
 export interface ChatRequest {
   jobId: string;
@@ -13,7 +14,7 @@ export interface ChatRequest {
   apiKey: string;
   body: string;
   contactName?: string;
-  customFields?: Record<string, string>;
+  customFields?: NamedCustomField[];
   attachments?: string[];
   receivedAt: string;
   requestId: string | undefined;
@@ -72,18 +73,24 @@ export class WebhookForwarder {
       message.attachments = req.attachments;
     }
 
-    // Custom fields are spread directly into contact_data (by their GHL name,
-    // e.g. "Reprogramar Cita"). The reserved keys (ghl_token, location_id,
-    // name) are assigned AFTER the spread so a custom field can never shadow
-    // them.
-    const contact_data: Record<string, string> = {};
-    if (req.customFields) {
-      Object.assign(contact_data, req.customFields);
-    }
-    contact_data.ghl_token = req.apiKey;
-    contact_data.location_id = req.locationId;
+    // Custom fields are sent as a structured `custom_fields` array, each entry
+    // carrying { id, name, value }. Keeping them under their own key means a
+    // field can never collide with the reserved keys (ghl_token, location_id,
+    // name) regardless of how it was named in GHL.
+    const contact_data: {
+      ghl_token: string;
+      location_id: string;
+      name?: string;
+      custom_fields?: NamedCustomField[];
+    } = {
+      ghl_token: req.apiKey,
+      location_id: req.locationId,
+    };
     if (req.contactName) {
       contact_data.name = req.contactName;
+    }
+    if (req.customFields && req.customFields.length > 0) {
+      contact_data.custom_fields = req.customFields;
     }
 
     const body = {

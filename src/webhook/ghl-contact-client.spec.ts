@@ -378,7 +378,7 @@ describe('GhlContactClient', () => {
       ['cf_5', 'Intereses'],
     ]);
 
-    it('joins values with names and drops fields with no definition', () => {
+    it('pairs id, name and value and drops fields with no definition', () => {
       const out = buildNamedCustomFields(
         [
           { id: 'cf_1', value: 'Juan' },
@@ -388,7 +388,10 @@ describe('GhlContactClient', () => {
         defs,
       );
 
-      expect(out).toEqual({ 'Nombre Cliente': 'Juan', Plan: 'Premium' });
+      expect(out).toEqual([
+        { id: 'cf_1', name: 'Nombre Cliente', value: 'Juan' },
+        { id: 'cf_2', name: 'Plan', value: 'Premium' },
+      ]);
     });
 
     it('normalizes numbers, booleans and arrays; trims strings; drops empties', () => {
@@ -403,12 +406,12 @@ describe('GhlContactClient', () => {
         defs,
       );
 
-      expect(out).toEqual({
-        'Nombre Cliente': 'Juan',
-        Edad: '30',
-        Activo: 'true',
-        Intereses: 'rock, jazz',
-      });
+      expect(out).toEqual([
+        { id: 'cf_1', name: 'Nombre Cliente', value: 'Juan' },
+        { id: 'cf_3', name: 'Edad', value: '30' },
+        { id: 'cf_4', name: 'Activo', value: 'true' },
+        { id: 'cf_5', name: 'Intereses', value: 'rock, jazz' },
+      ]);
     });
 
     it('drops object/null values that would not stringify meaningfully', () => {
@@ -421,10 +424,10 @@ describe('GhlContactClient', () => {
         defs,
       );
 
-      expect(out).toEqual({});
+      expect(out).toEqual([]);
     });
 
-    it('last write wins on duplicate names', () => {
+    it('keeps duplicate names as separate entries, each with its own id', () => {
       const dupDefs = new Map([
         ['cf_1', 'Plan'],
         ['cf_2', 'Plan'],
@@ -437,7 +440,10 @@ describe('GhlContactClient', () => {
         dupDefs,
       );
 
-      expect(out).toEqual({ Plan: 'Premium' });
+      expect(out).toEqual([
+        { id: 'cf_1', name: 'Plan', value: 'Basic' },
+        { id: 'cf_2', name: 'Plan', value: 'Premium' },
+      ]);
     });
   });
 });

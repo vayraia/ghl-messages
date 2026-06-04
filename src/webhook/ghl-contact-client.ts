@@ -331,22 +331,34 @@ function extractCustomFieldDefs(data: unknown): Map<string, string> {
 }
 
 /**
+ * A contact custom field resolved against the location's definitions, carrying
+ * its `id`, human-readable `name` and normalized string `value`. This is the
+ * element shape of `contact_data.custom_fields`.
+ */
+export interface NamedCustomField {
+  id: string;
+  name: string;
+  value: string;
+}
+
+/**
  * Joins the contact's `customFields` (id → value) with the location's
- * definitions (id → name) into a `{ name: value }` object suitable for
+ * definitions (id → name) into an array of `{ id, name, value }` suitable for
  * `contact_data.custom_fields`. Fields whose id has no definition, or whose
- * value normalizes to empty, are dropped. On duplicate names the last wins.
+ * value normalizes to empty, are dropped. Duplicate names are preserved as
+ * separate entries (each keeps its own id).
  */
 export function buildNamedCustomFields(
   fields: ContactCustomField[],
   defs: Map<string, string>,
-): Record<string, string> {
-  const out: Record<string, string> = {};
+): NamedCustomField[] {
+  const out: NamedCustomField[] = [];
   for (const f of fields) {
     const name = defs.get(f.id);
     if (!name) continue;
     const value = normalizeFieldValue(f.value);
     if (value === undefined) continue;
-    out[name] = value;
+    out.push({ id: f.id, name, value });
   }
   return out;
 }

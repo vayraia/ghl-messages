@@ -368,7 +368,7 @@ describe('WebhookProcessor.process', () => {
       (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({ apiKey: 'k' });
     }
 
-    it('resolves contact custom fields to name→value and forwards them', async () => {
+    it('resolves contact custom fields to { id, name, value } and forwards them', async () => {
       const p = makeProcessor();
       setupHappyPathMocks(p);
       (p.contactClient.get as jest.Mock).mockResolvedValue({
@@ -394,7 +394,10 @@ describe('WebhookProcessor.process', () => {
       });
       expect(p.forwarder.forward).toHaveBeenCalledWith(
         expect.objectContaining({
-          customFields: { 'Nombre Cliente': 'Juan', Plan: 'Premium' },
+          customFields: [
+            { id: 'cf_1', name: 'Nombre Cliente', value: 'Juan' },
+            { id: 'cf_2', name: 'Plan', value: 'Premium' },
+          ],
         }),
       );
     });

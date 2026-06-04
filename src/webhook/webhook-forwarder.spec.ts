@@ -104,7 +104,7 @@ describe('WebhookForwarder', () => {
     });
   });
 
-  it('spreads custom fields directly into contact_data by their GHL name', async () => {
+  it('sends custom fields as a structured custom_fields array', async () => {
     const { forwarder, post } = makeForwarder();
     post.mockResolvedValue({
       status: 200,
@@ -114,10 +114,10 @@ describe('WebhookForwarder', () => {
     await forwarder.forward({
       ...baseReq,
       contactName: 'Fabio',
-      customFields: {
-        'Reprogramar Cita': 'https://app.vayraperu.com/widget/booking/x',
-        'Nombre Cliente': 'Juan',
-      },
+      customFields: [
+        { id: 'cf_1', name: 'Reprogramar Cita', value: 'https://app.vayraperu.com/widget/booking/x' },
+        { id: 'cf_2', name: 'Nombre Cliente', value: 'Juan' },
+      ],
     });
 
     const [, body] = post.mock.calls[0];
@@ -125,25 +125,28 @@ describe('WebhookForwarder', () => {
       ghl_token: 'pit-xxx',
       location_id: 'loc_abc',
       name: 'Fabio',
-      'Reprogramar Cita': 'https://app.vayraperu.com/widget/booking/x',
-      'Nombre Cliente': 'Juan',
+      custom_fields: [
+        { id: 'cf_1', name: 'Reprogramar Cita', value: 'https://app.vayraperu.com/widget/booking/x' },
+        { id: 'cf_2', name: 'Nombre Cliente', value: 'Juan' },
+      ],
     });
   });
 
-  it('keeps contact_data with only reserved keys when customFields is empty or absent', async () => {
+  it('omits custom_fields when the array is empty or absent', async () => {
     const { forwarder, post } = makeForwarder();
     post.mockResolvedValue({
       status: 200,
       data: { messages: [{ type: 'text', content: 'ok' }] },
     });
 
-    await forwarder.forward({ ...baseReq, customFields: {} });
+    await forwarder.forward({ ...baseReq, customFields: [] });
 
     const [, body] = post.mock.calls[0];
     expect(body.contact_data).toEqual({ ghl_token: 'pit-xxx', location_id: 'loc_abc' });
+    expect(body.contact_data).not.toHaveProperty('custom_fields');
   });
 
-  it('never lets a custom field shadow the reserved contact_data keys', async () => {
+  it('never lets a custom field collide with the reserved contact_data keys', async () => {
     const { forwarder, post } = makeForwarder();
     post.mockResolvedValue({
       status: 200,
@@ -153,16 +156,26 @@ describe('WebhookForwarder', () => {
     await forwarder.forward({
       ...baseReq,
       contactName: 'Fabio',
-      // A maliciously/oddly named custom field must not override the contract.
-      customFields: { ghl_token: 'HACKED', location_id: 'HACKED', name: 'HACKED' },
+      // Oddly named fields live under custom_fields and cannot touch the
+      // reserved top-level keys.
+      customFields: [
+        { id: 'cf_1', name: 'ghl_token', value: 'HACKED' },
+        { id: 'cf_2', name: 'location_id', value: 'HACKED' },
+        { id: 'cf_3', name: 'name', value: 'HACKED' },
+      ],
     });
 
     const [, body] = post.mock.calls[0];
-    expect(body.contact_data).toEqual({
+    expect(body.contact_data).toMatchObject({
       ghl_token: 'pit-xxx',
       location_id: 'loc_abc',
       name: 'Fabio',
     });
+    expect(body.contact_data.custom_fields).toEqual([
+      { id: 'cf_1', name: 'ghl_token', value: 'HACKED' },
+      { id: 'cf_2', name: 'location_id', value: 'HACKED' },
+      { id: 'cf_3', name: 'name', value: 'HACKED' },
+    ]);
   });
 
   it('includes attachments in message when provided', async () => {

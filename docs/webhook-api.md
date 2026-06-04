@@ -152,7 +152,10 @@ x-request-id: <uuid>
   "contact_data": {
     "ghl_token": "pit-...",
     "location_id": "loc_...",
-    "name": "Fabio"
+    "name": "Fabio",
+    "custom_fields": [
+      { "id": "cf_1", "name": "Reprogramar Cita", "value": "https://..." }
+    ]
   },
   "message": { "body": "hola\nbuen día\nquiero info" }
 }
@@ -177,7 +180,7 @@ GHL  ──POST──►  /v1/webhook
                                           ├─ drain Redis list (LRANGE + DEL atomic)
                                           ├─ GET  $GHL_API_BASE_URL/contacts/{id}   (firstName + custom fields)
                                           ├─ POST $CHAT_API_URL/chat
-                                          │     body: { agent_id, contact_id, contact_data: { ghl_token, location_id, name? }, message: { body } }
+                                          │     body: { agent_id, contact_id, contact_data: { ghl_token, location_id, name?, custom_fields? }, message: { body } }
                                           │     → expects { messages: [...] }
                                           └─ POST $GHL_API_BASE_URL/conversations/messages
                                                 Authorization: Bearer $GHL_API_KEY
@@ -196,7 +199,10 @@ The forwarder POSTs:
   "contact_data": {
     "ghl_token": "pit-...",
     "location_id": "loc_...",
-    "name": "Fabio"
+    "name": "Fabio",
+    "custom_fields": [
+      { "id": "cf_1", "name": "Reprogramar Cita", "value": "https://..." }
+    ]
   },
   "message": { "body": "hola\nbuen día" }
 }
@@ -213,6 +219,14 @@ on every flush (regardless of whether the group has an `ai_field_id`
 gate configured), so the same call serves both the AI toggle and the
 name lookup. When the contact has no `firstName`, `name` is omitted from
 `contact_data`.
+
+`contact_data.custom_fields` is an array of the contact's custom fields,
+each entry carrying `{ id, name, value }`. The `id` is GHL's custom-field
+id, `name` is resolved from `GET $GHL_API_BASE_URL/locations/{id}/customFields`
+(cached per location), and `value` is the contact's value normalized to a
+string. Resolution is best-effort: if the contact has no custom fields, or
+the definitions lookup fails, `custom_fields` is omitted entirely rather
+than failing the job.
 
 Headers added by the forwarder:
 
