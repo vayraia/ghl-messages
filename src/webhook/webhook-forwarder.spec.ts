@@ -31,6 +31,7 @@ const baseReq: ChatRequest = {
   locationId: 'loc_abc',
   apiKey: 'pit-xxx',
   body: 'hola\nbuen día',
+  channel: 'WhatsApp',
   receivedAt: '2026-04-28T00:00:00.000Z',
   requestId: 'req-1',
 };
@@ -71,7 +72,7 @@ describe('WebhookForwarder', () => {
       agent_id: 'ventas',
       contact_id: 'c-1',
       contact_data: { ghl_token: 'pit-xxx', location_id: 'loc_abc' },
-      message: { body: 'hola\nbuen día' },
+      message: { body: 'hola\nbuen día', type: 'WhatsApp' },
     });
     expect(opts.headers).toMatchObject({
       'x-webhook-job-id': 'job-1',
@@ -100,7 +101,7 @@ describe('WebhookForwarder', () => {
         location_id: 'loc_abc',
         name: 'Fabio Coronado',
       },
-      message: { body: 'hola\nbuen día' },
+      message: { body: 'hola\nbuen día', type: 'WhatsApp' },
     });
   });
 
@@ -193,6 +194,7 @@ describe('WebhookForwarder', () => {
     const [, body] = post.mock.calls[0];
     expect(body.message).toEqual({
       body: 'hola\nbuen día',
+      type: 'WhatsApp',
       attachments: ['https://files.gohighlevel/a.jpg', 'https://files.gohighlevel/b.pdf'],
     });
   });
@@ -207,7 +209,7 @@ describe('WebhookForwarder', () => {
     await forwarder.forward({ ...baseReq, attachments: [] });
 
     const [, body] = post.mock.calls[0];
-    expect(body.message).toEqual({ body: 'hola\nbuen día' });
+    expect(body.message).toEqual({ body: 'hola\nbuen día', type: 'WhatsApp' });
     expect(body.message).not.toHaveProperty('attachments');
   });
 

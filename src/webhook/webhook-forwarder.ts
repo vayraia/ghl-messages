@@ -5,6 +5,7 @@ import { UnrecoverableError } from 'bullmq';
 import { AppEnv } from '../config/env.validation';
 import { REQUEST_ID_HEADER } from '../common/middleware/request-id.middleware';
 import { NamedCustomField } from './ghl-contact-client';
+import { ReplyChannel } from './channel-resolver';
 
 export interface ChatRequest {
   jobId: string;
@@ -13,6 +14,7 @@ export interface ChatRequest {
   locationId: string;
   apiKey: string;
   body: string;
+  channel: ReplyChannel;
   contactName?: string;
   customFields?: NamedCustomField[];
   attachments?: string[];
@@ -68,7 +70,13 @@ export class WebhookForwarder {
       headers[REQUEST_ID_HEADER] = req.requestId;
     }
 
-    const message: { body: string; attachments?: string[] } = { body: req.body };
+    // `type` carries the originating channel (WhatsApp / IG / FB / …) so the
+    // chat API knows where the inbound message came from. Same enum used by
+    // GHL's `POST /conversations/messages` `type` field.
+    const message: { body: string; type: ReplyChannel; attachments?: string[] } = {
+      body: req.body,
+      type: req.channel,
+    };
     if (req.attachments && req.attachments.length > 0) {
       message.attachments = req.attachments;
     }

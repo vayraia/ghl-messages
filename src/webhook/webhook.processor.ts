@@ -195,6 +195,7 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
       locationId,
       apiKey: group.apiKey,
       body: concatenated,
+      channel: replyChannel,
       contactName: contact.firstName,
       customFields,
       attachments: attachments.length > 0 ? attachments : undefined,

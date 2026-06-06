@@ -180,7 +180,7 @@ GHL  ──POST──►  /v1/webhook
                                           ├─ drain Redis list (LRANGE + DEL atomic)
                                           ├─ GET  $GHL_API_BASE_URL/contacts/{id}   (firstName + custom fields)
                                           ├─ POST $CHAT_API_URL/chat
-                                          │     body: { agent_id, contact_id, contact_data: { ghl_token, location_id, name?, custom_fields? }, message: { body } }
+                                          │     body: { agent_id, contact_id, contact_data: { ghl_token, location_id, name?, custom_fields? }, message: { body, type } }
                                           │     → expects { messages: [...] }
                                           └─ POST $GHL_API_BASE_URL/conversations/messages
                                                 Authorization: Bearer $GHL_API_KEY
@@ -204,7 +204,7 @@ The forwarder POSTs:
       { "id": "cf_1", "name": "Reprogramar Cita", "value": "https://..." }
     ]
   },
-  "message": { "body": "hola\nbuen día" }
+  "message": { "body": "hola\nbuen día", "type": "WhatsApp" }
 }
 ```
 
@@ -227,6 +227,12 @@ id, `name` is resolved from `GET $GHL_API_BASE_URL/locations/{id}/customFields`
 string. Resolution is best-effort: if the contact has no custom fields, or
 the definitions lookup fails, `custom_fields` is omitted entirely rather
 than failing the job.
+
+`message.type` is the originating channel of the inbound message, one of
+`SMS`, `RCS`, `Email`, `WhatsApp`, `IG`, `FB`, `Custom`, `Live_Chat`,
+`TIKTOK` (the same enum GHL accepts on `POST /conversations/messages`). It
+lets the chat API know whether the message came from WhatsApp, Instagram,
+Facebook, etc. It is the same channel the reply is sent back on.
 
 Headers added by the forwarder:
 
