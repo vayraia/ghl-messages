@@ -1,7 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosError } from 'axios';
 import { UnrecoverableError } from 'bullmq';
-import { GhlReply, GhlReplyInput } from './ghl-reply';
+import { GhlReply, GhlReplyInput, inferImageMimeType } from './ghl-reply';
 import { AppEnv } from '../config/env.validation';
 
 jest.mock('axios');
@@ -106,6 +106,86 @@ describe('GhlReply', () => {
 
     const [, , opts] = post.mock.calls[0];
     expect(opts.headers.Authorization).toBe('Bearer another-key');
+  });
+
+  it('sends the structured whatsapp.media body with fromNumberId when provided', async () => {
+    const { ghl, post } = makeGhl();
+    post.mockResolvedValue({ status: 201, data: { ok: true } });
+
+    await ghl.send({
+      ...baseInput,
+      message: 'Prueba mensaje',
+      locationId: 'wfS46PMu1sOToYyj38Mq',
+      whatsappMedia: {
+        type: 'image',
+        url: 'https://assets.cdn.filesafe.space/loc/media/abc.jpg',
+        caption: 'Prueba mensaje',
+        mimeType: 'image/jpeg',
+        fromNumberId: '1130377746823770',
+      },
+    });
+
+    const [url, body] = post.mock.calls[0];
+    expect(url).toBe('/conversations/messages');
+    expect(body).toEqual({
+      contactId: 'c-1',
+      locationId: 'wfS46PMu1sOToYyj38Mq',
+      type: 'WhatsApp',
+      message: 'Prueba mensaje',
+      whatsapp: {
+        type: 'media',
+        fromNumberId: '1130377746823770',
+        media: {
+          type: 'image',
+          url: 'https://assets.cdn.filesafe.space/loc/media/abc.jpg',
+          caption: 'Prueba mensaje',
+          mimeType: 'image/jpeg',
+        },
+      },
+    });
+    // The structured body must NOT carry the flat attachments key.
+    expect(body).not.toHaveProperty('attachments');
+  });
+
+  it('omits fromNumberId from the whatsapp block when not provided', async () => {
+    const { ghl, post } = makeGhl();
+    post.mockResolvedValue({ status: 201, data: { ok: true } });
+
+    await ghl.send({
+      ...baseInput,
+      locationId: 'loc-1',
+      whatsappMedia: {
+        type: 'image',
+        url: 'https://cdn.app.com/img.png',
+        caption: '',
+        mimeType: 'image/png',
+      },
+    });
+
+    const [, body] = post.mock.calls[0];
+    expect(body.whatsapp).not.toHaveProperty('fromNumberId');
+    expect(body.whatsapp.media).toEqual({
+      type: 'image',
+      url: 'https://cdn.app.com/img.png',
+      caption: '',
+      mimeType: 'image/png',
+    });
+  });
+
+  describe('inferImageMimeType', () => {
+    it.each([
+      ['https://cdn.app.com/a.jpg', 'image/jpeg'],
+      ['https://cdn.app.com/a.jpeg', 'image/jpeg'],
+      ['https://cdn.app.com/a.JPG', 'image/jpeg'],
+      ['https://cdn.app.com/a.png', 'image/png'],
+      ['https://cdn.app.com/a.webp', 'image/webp'],
+      ['https://cdn.app.com/a.gif', 'image/gif'],
+      ['https://cdn.app.com/a.png?v=123&x=1', 'image/png'],
+      ['https://cdn.app.com/a', 'image/jpeg'],
+      ['https://cdn.app.com/a.bmp', 'image/jpeg'],
+    ])('maps %s to %s', (url, expected) => {
+      expect(inferImageMimeType(url)).toBe(expected);
+    });
   });
 
   it('throws UnrecoverableError on 4xx', async () => {

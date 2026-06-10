@@ -30,6 +30,7 @@ export interface GroupSettings {
   defaultAgent?: string;
   channelAgents?: ChannelAgents;
   nonBlockingUsers?: NonBlockingUser[];
+  whatsappNumberId?: string;
 }
 
 interface GroupResponse {
@@ -41,6 +42,7 @@ interface GroupResponse {
     default_agent?: unknown;
     channel_agents?: unknown;
     non_blocking_users?: unknown;
+    whatsapp_number_id?: unknown;
     [key: string]: unknown;
   };
   [key: string]: unknown;
@@ -121,6 +123,7 @@ export class GroupFetcher {
         defaultAgent: parseDefaultAgent(body.general_settings?.default_agent),
         channelAgents: parseChannelAgents(body.general_settings?.channel_agents),
         nonBlockingUsers: parseNonBlockingUsers(body.general_settings?.non_blocking_users),
+        whatsappNumberId: parseWhatsappNumberId(body.general_settings?.whatsapp_number_id),
       };
     }
 
@@ -143,6 +146,12 @@ export class GroupFetcher {
 }
 
 function parseDefaultAgent(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function parseWhatsappNumberId(raw: unknown): string | undefined {
   if (typeof raw !== 'string') return undefined;
   const trimmed = raw.trim();
   return trimmed.length > 0 ? trimmed : undefined;

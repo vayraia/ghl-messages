@@ -5,6 +5,20 @@ import { UnrecoverableError } from 'bullmq';
 import { AppEnv } from '../config/env.validation';
 import { ReplyChannel } from './channel-resolver';
 
+/**
+ * Structured WhatsApp media send. When present (only for `type: 'WhatsApp'`
+ * image replies), GHL receives the nested `whatsapp.media` body instead of the
+ * flat `attachments` array. `fromNumberId` is optional: when the group has no
+ * `whatsapp_number_id` configured the block is sent without it.
+ */
+export interface WhatsappMedia {
+  type: 'image';
+  url: string;
+  caption: string;
+  mimeType: string;
+  fromNumberId?: string;
+}
+
 export interface GhlReplyInput {
   jobId: string;
   contactId: string;
@@ -12,6 +26,8 @@ export interface GhlReplyInput {
   type: ReplyChannel;
   apiKey: string;
   attachments?: string[];
+  locationId?: string;
+  whatsappMedia?: WhatsappMedia;
 }
 
 export interface GhlReplyResult {
@@ -47,19 +63,7 @@ export class GhlReply {
   }
 
   async send(input: GhlReplyInput): Promise<GhlReplyResult> {
-    const body: {
-      contactId: string;
-      message: string;
-      type: ReplyChannel;
-      attachments?: string[];
-    } = {
-      contactId: input.contactId,
-      message: input.message,
-      type: input.type,
-    };
-    if (input.attachments && input.attachments.length > 0) {
-      body.attachments = input.attachments;
-    }
+    const body = buildSendBody(input);
 
     const started = Date.now();
     let response;
@@ -100,6 +104,80 @@ export class GhlReply {
       'GHL errored — retryable',
     );
     throw new Error(`GHL returned ${status}: ${summary}`);
+  }
+}
+
+interface WhatsappMediaBody {
+  contactId: string;
+  locationId?: string;
+  type: ReplyChannel;
+  message: string;
+  whatsapp: {
+    type: 'media';
+    fromNumberId?: string;
+    media: { type: 'image'; url: string; caption: string; mimeType: string };
+  };
+}
+
+interface FlatSendBody {
+  contactId: string;
+  message: string;
+  type: ReplyChannel;
+  attachments?: string[];
+}
+
+/**
+ * Builds the GHL `POST /conversations/messages` body. WhatsApp image replies
+ * use the structured `whatsapp.media` shape (carrying `fromNumberId` when the
+ * group provides one); everything else uses the flat `message`/`attachments`
+ * shape.
+ */
+function buildSendBody(input: GhlReplyInput): WhatsappMediaBody | FlatSendBody {
+  if (input.whatsappMedia) {
+    const { fromNumberId, url, caption, mimeType } = input.whatsappMedia;
+    return {
+      contactId: input.contactId,
+      ...(input.locationId ? { locationId: input.locationId } : {}),
+      type: input.type,
+      message: input.message,
+      whatsapp: {
+        type: 'media',
+        ...(fromNumberId ? { fromNumberId } : {}),
+        media: { type: 'image', url, caption, mimeType },
+      },
+    };
+  }
+
+  const body: FlatSendBody = {
+    contactId: input.contactId,
+    message: input.message,
+    type: input.type,
+  };
+  if (input.attachments && input.attachments.length > 0) {
+    body.attachments = input.attachments;
+  }
+  return body;
+}
+
+/**
+ * Infers a WhatsApp-acceptable image MIME type from the URL's file extension.
+ * Falls back to `image/jpeg` for unknown or extension-less URLs.
+ */
+export function inferImageMimeType(url: string): string {
+  const path = url.split(/[?#]/, 1)[0];
+  const dot = path.lastIndexOf('.');
+  const ext = dot >= 0 ? path.slice(dot + 1).toLowerCase() : '';
+  switch (ext) {
+    case 'png':
+      return 'image/png';
+    case 'webp':
+      return 'image/webp';
+    case 'gif':
+      return 'image/gif';
+    case 'jpg':
+    case 'jpeg':
+    default:
+      return 'image/jpeg';
   }
 }
 

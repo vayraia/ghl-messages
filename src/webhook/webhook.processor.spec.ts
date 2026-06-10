@@ -661,10 +661,19 @@ describe('WebhookProcessor.process', () => {
         type: 'WhatsApp',
         attachments: undefined,
       });
+      // image + WhatsApp routes through the structured whatsapp.media body,
+      // not the flat attachments array.
       expect(calls[1]).toMatchObject({
         message: 'Modelo A',
-        attachments: ['https://cdn.app.com/img1.jpg'],
+        type: 'WhatsApp',
+        whatsappMedia: {
+          type: 'image',
+          url: 'https://cdn.app.com/img1.jpg',
+          caption: 'Modelo A',
+          mimeType: 'image/jpeg',
+        },
       });
+      expect(calls[1]).not.toHaveProperty('attachments');
       expect(calls[2]).toMatchObject({
         message: 'Este tiene mejor batería.',
         attachments: undefined,
@@ -750,6 +759,90 @@ describe('WebhookProcessor.process', () => {
       expect(p.insistence.schedule).not.toHaveBeenCalled();
       expect(result).toMatchObject({ ok: true, drained: 1 });
       expect(result).not.toHaveProperty('ghlStatus', 200);
+    });
+  });
+
+  describe('WhatsApp image media routing', () => {
+    function setupImageReply(p: ReturnType<typeof makeProcessor>, group: Record<string, unknown>) {
+      (p.debouncer.drain as jest.Mock).mockResolvedValue(sampleItems);
+      (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({ apiKey: 'pit-loc-key', ...group });
+      (p.forwarder.forward as jest.Mock).mockResolvedValue({
+        messages: [
+          {
+            type: 'image',
+            url: 'https://assets.cdn.filesafe.space/loc/media/abc.jpg',
+            caption: 'Prueba mensaje',
+          },
+        ],
+        durationMs: 5,
+      });
+      (p.ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 3 });
+      (p.insistence.schedule as jest.Mock).mockResolvedValue(undefined);
+    }
+
+    it('sends whatsapp.media with fromNumberId when the group has whatsappNumberId', async () => {
+      const p = makeProcessor();
+      setupImageReply(p, { whatsappNumberId: '1130377746823770' });
+
+      await p.processor.process(makeJob());
+
+      expect(p.ghl.send).toHaveBeenCalledWith({
+        jobId: 'job-1',
+        contactId: 'c1',
+        message: 'Prueba mensaje',
+        type: 'WhatsApp',
+        apiKey: 'pit-loc-key',
+        locationId: 'loc_abc',
+        whatsappMedia: {
+          type: 'image',
+          url: 'https://assets.cdn.filesafe.space/loc/media/abc.jpg',
+          caption: 'Prueba mensaje',
+          mimeType: 'image/jpeg',
+          fromNumberId: '1130377746823770',
+        },
+      });
+    });
+
+    it('sends whatsapp.media with fromNumberId=undefined when the group has no whatsappNumberId', async () => {
+      const p = makeProcessor();
+      setupImageReply(p, {});
+
+      await p.processor.process(makeJob());
+
+      const sent = (p.ghl.send as jest.Mock).mock.calls[0][0];
+      expect(sent).toMatchObject({
+        type: 'WhatsApp',
+        whatsappMedia: { type: 'image', mimeType: 'image/jpeg' },
+      });
+      expect(sent.whatsappMedia.fromNumberId).toBeUndefined();
+      expect(sent).not.toHaveProperty('attachments');
+    });
+
+    it('keeps the flat attachments shape for an image on a non-WhatsApp channel', async () => {
+      const p = makeProcessor();
+      (p.debouncer.drain as jest.Mock).mockResolvedValue([
+        { ...sampleItems[0], replyChannel: 'IG' },
+      ]);
+      (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({
+        apiKey: 'pit-loc-key',
+        whatsappNumberId: '1130377746823770',
+      });
+      (p.forwarder.forward as jest.Mock).mockResolvedValue({
+        messages: [{ type: 'image', url: 'https://cdn.app.com/img.jpg', caption: 'cap' }],
+        durationMs: 5,
+      });
+      (p.ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 3 });
+      (p.insistence.schedule as jest.Mock).mockResolvedValue(undefined);
+
+      await p.processor.process(makeJob());
+
+      const sent = (p.ghl.send as jest.Mock).mock.calls[0][0];
+      expect(sent).toMatchObject({
+        type: 'IG',
+        message: 'cap',
+        attachments: ['https://cdn.app.com/img.jpg'],
+      });
+      expect(sent).not.toHaveProperty('whatsappMedia');
     });
   });
 });

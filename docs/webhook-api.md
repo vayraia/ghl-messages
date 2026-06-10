@@ -280,6 +280,38 @@ The `type` field is the resolved `replyChannel`, picked from (in order):
 `contact.lastAttributionSource.medium` → `contact.attributionSource.medium`
 → `customData.channel` → `message.type`. Falls back to `WhatsApp`.
 
+A `/chat` reply element of `type: image` on the **WhatsApp** channel is sent
+with GHL's structured `whatsapp.media` body instead of the flat `attachments`
+array:
+
+```json
+{
+  "contactId": "c_01H...",
+  "locationId": "wfS46PMu1sOToYyj38Mq",
+  "type": "WhatsApp",
+  "message": "<caption>",
+  "whatsapp": {
+    "type": "media",
+    "fromNumberId": "1130377746823770",
+    "media": {
+      "type": "image",
+      "url": "https://.../media/abc.jpg",
+      "caption": "<caption>",
+      "mimeType": "image/jpeg"
+    }
+  }
+}
+```
+
+- `fromNumberId` comes from the group's `general_settings.whatsapp_number_id`.
+  When the group has no `whatsapp_number_id`, the same `whatsapp.media` body is
+  sent **without** the `fromNumberId` key.
+- `mimeType` is inferred from the URL extension (`.png`→`image/png`,
+  `.webp`→`image/webp`, `.gif`→`image/gif`, everything else →`image/jpeg`).
+- This applies **only** to `image` replies on WhatsApp. `file` replies, images
+  on other channels (IG/FB/…), and `text` replies keep the flat
+  `message`/`attachments` shape shown above.
+
 Failure handling matches the chat call: 4xx → no retry, 5xx / network →
 retried by BullMQ. Because both downstream calls live inside one job, a
 GHL retry will re-call `/chat` as well. If you observe high duplicate

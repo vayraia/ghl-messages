@@ -10,7 +10,7 @@ import {
   buildNamedCustomFields,
   NamedCustomField,
 } from './ghl-contact-client';
-import { GhlReply } from './ghl-reply';
+import { GhlReply, inferImageMimeType } from './ghl-reply';
 import { GroupFetcher } from './group-fetcher';
 import { InsistenceClient } from './insistence-client';
 import { FlushJobData, MessageDebouncer } from './message-debouncer';
@@ -208,16 +208,40 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
     let failed = 0;
     for (let i = 0; i < chat.messages.length; i++) {
       if (i > 0) await sleep(CHAT_MESSAGE_DELAY_MS);
-      const payload = toGhlPayload(chat.messages[i]);
+      const message = chat.messages[i];
       try {
-        const result = await this.ghl.send({
-          jobId: String(job.id),
-          contactId,
-          message: payload.message,
-          type: replyChannel,
-          apiKey: group.apiKey,
-          attachments: payload.attachments,
-        });
+        // WhatsApp image replies use GHL's structured `whatsapp.media` body
+        // (with the group's `fromNumberId` when available); every other case
+        // uses the flat message/attachments shape.
+        let result;
+        if (message.type === 'image' && replyChannel === 'WhatsApp') {
+          const caption = message.caption ?? '';
+          result = await this.ghl.send({
+            jobId: String(job.id),
+            contactId,
+            message: caption,
+            type: replyChannel,
+            apiKey: group.apiKey,
+            locationId,
+            whatsappMedia: {
+              type: 'image',
+              url: message.url,
+              caption,
+              mimeType: inferImageMimeType(message.url),
+              fromNumberId: group.whatsappNumberId,
+            },
+          });
+        } else {
+          const payload = toGhlPayload(message);
+          result = await this.ghl.send({
+            jobId: String(job.id),
+            contactId,
+            message: payload.message,
+            type: replyChannel,
+            apiKey: group.apiKey,
+            attachments: payload.attachments,
+          });
+        }
         sent++;
         lastStatus = result.status;
       } catch (err) {
@@ -231,7 +255,7 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
             contactId,
             index: i,
             total: chat.messages.length,
-            messageType: chat.messages[i].type,
+            messageType: message.type,
             err: (err as Error).message,
           },
           'GHL send failed mid-sequence — continuing with remaining messages',

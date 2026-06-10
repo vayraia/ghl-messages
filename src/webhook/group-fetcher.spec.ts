@@ -406,6 +406,43 @@ describe('GroupFetcher', () => {
     ]);
   });
 
+  it('parses whatsapp_number_id when it is a non-blank string', async () => {
+    const { fetcher, get } = makeFetcher();
+    get.mockResolvedValue({
+      status: 200,
+      data: {
+        api_key: 'sk',
+        general_settings: { whatsapp_number_id: '  1130377746823770  ' },
+      },
+    });
+
+    const result = await fetcher.fetch('loc_abc', 'job-1');
+
+    expect(result.whatsappNumberId).toBe('1130377746823770');
+  });
+
+  it('returns whatsappNumberId=undefined when missing, blank, or non-string', async () => {
+    const { fetcher, get } = makeFetcher();
+
+    get.mockResolvedValue({
+      status: 200,
+      data: { api_key: 'sk', general_settings: {} },
+    });
+    expect((await fetcher.fetch('loc_abc', 'job-1')).whatsappNumberId).toBeUndefined();
+
+    get.mockResolvedValue({
+      status: 200,
+      data: { api_key: 'sk', general_settings: { whatsapp_number_id: '   ' } },
+    });
+    expect((await fetcher.fetch('loc_abc', 'job-1')).whatsappNumberId).toBeUndefined();
+
+    get.mockResolvedValue({
+      status: 200,
+      data: { api_key: 'sk', general_settings: { whatsapp_number_id: 42 } },
+    });
+    expect((await fetcher.fetch('loc_abc', 'job-1')).whatsappNumberId).toBeUndefined();
+  });
+
   it('throws UnrecoverableError when 2xx response has no api_key', async () => {
     const { fetcher, get } = makeFetcher();
     get.mockResolvedValue({
