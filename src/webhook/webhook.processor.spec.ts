@@ -678,10 +678,20 @@ describe('WebhookProcessor.process', () => {
         message: 'Este tiene mejor batería.',
         attachments: undefined,
       });
+      // file + WhatsApp routes through the structured whatsapp.media document
+      // body, not the flat attachments array.
       expect(calls[3]).toMatchObject({
         message: '',
-        attachments: ['https://cdn.app.com/specs.pdf'],
+        type: 'WhatsApp',
+        whatsappMedia: {
+          type: 'document',
+          name: 'specs.pdf',
+          url: 'https://cdn.app.com/specs.pdf',
+          caption: '',
+          mimeType: 'application/pdf',
+        },
       });
+      expect(calls[3]).not.toHaveProperty('attachments');
     });
 
     it('waits 2500ms between consecutive sends (N-1 gaps for N messages)', async () => {
@@ -841,6 +851,115 @@ describe('WebhookProcessor.process', () => {
         type: 'IG',
         message: 'cap',
         attachments: ['https://cdn.app.com/img.jpg'],
+      });
+      expect(sent).not.toHaveProperty('whatsappMedia');
+    });
+  });
+
+  describe('WhatsApp file (document) media routing', () => {
+    function setupFileReply(
+      p: ReturnType<typeof makeProcessor>,
+      group: Record<string, unknown>,
+      fileMessage: Record<string, unknown>,
+    ) {
+      (p.debouncer.drain as jest.Mock).mockResolvedValue(sampleItems);
+      (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({ apiKey: 'pit-loc-key', ...group });
+      (p.forwarder.forward as jest.Mock).mockResolvedValue({
+        messages: [fileMessage],
+        durationMs: 5,
+      });
+      (p.ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 3 });
+      (p.insistence.schedule as jest.Mock).mockResolvedValue(undefined);
+    }
+
+    it('sends whatsapp.media document with name, mimeType and fromNumberId', async () => {
+      const p = makeProcessor();
+      setupFileReply(
+        p,
+        { whatsappNumberId: '1130377746823770' },
+        {
+          type: 'file',
+          url: 'https://cdn.ejemplo.com/docs/cotizacion-1234.pdf',
+          filename: 'cotizacion-1234.pdf',
+          caption: 'Cotización válida por 7 días',
+        },
+      );
+
+      await p.processor.process(makeJob());
+
+      expect(p.ghl.send).toHaveBeenCalledWith({
+        jobId: 'job-1',
+        contactId: 'c1',
+        message: 'Cotización válida por 7 días',
+        type: 'WhatsApp',
+        apiKey: 'pit-loc-key',
+        locationId: 'loc_abc',
+        whatsappMedia: {
+          type: 'document',
+          name: 'cotizacion-1234.pdf',
+          url: 'https://cdn.ejemplo.com/docs/cotizacion-1234.pdf',
+          caption: 'Cotización válida por 7 días',
+          mimeType: 'application/pdf',
+          fromNumberId: '1130377746823770',
+        },
+      });
+    });
+
+    it('omits fromNumberId when the group has no whatsappNumberId', async () => {
+      const p = makeProcessor();
+      setupFileReply(
+        p,
+        {},
+        { type: 'file', url: 'https://cdn.app.com/a.pdf', filename: 'a.pdf', caption: 'x' },
+      );
+
+      await p.processor.process(makeJob());
+
+      const sent = (p.ghl.send as jest.Mock).mock.calls[0][0];
+      expect(sent.whatsappMedia.fromNumberId).toBeUndefined();
+      expect(sent).not.toHaveProperty('attachments');
+    });
+
+    it('derives media.name from the URL basename when filename is missing', async () => {
+      const p = makeProcessor();
+      setupFileReply(
+        p,
+        { whatsappNumberId: 'n1' },
+        { type: 'file', url: 'https://cdn.app.com/media/6a29a45d.pdf', caption: '' },
+      );
+
+      await p.processor.process(makeJob());
+
+      const sent = (p.ghl.send as jest.Mock).mock.calls[0][0];
+      expect(sent.whatsappMedia.name).toBe('6a29a45d.pdf');
+      expect(sent.whatsappMedia.mimeType).toBe('application/pdf');
+    });
+
+    it('keeps the flat shape for a file on a non-WhatsApp channel, using caption as message', async () => {
+      const p = makeProcessor();
+      (p.debouncer.drain as jest.Mock).mockResolvedValue([
+        { ...sampleItems[0], replyChannel: 'IG' },
+      ]);
+      (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({
+        apiKey: 'pit-loc-key',
+        whatsappNumberId: 'n1',
+      });
+      (p.forwarder.forward as jest.Mock).mockResolvedValue({
+        messages: [
+          { type: 'file', url: 'https://cdn.app.com/a.pdf', filename: 'a.pdf', caption: 'mirá esto' },
+        ],
+        durationMs: 5,
+      });
+      (p.ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 3 });
+      (p.insistence.schedule as jest.Mock).mockResolvedValue(undefined);
+
+      await p.processor.process(makeJob());
+
+      const sent = (p.ghl.send as jest.Mock).mock.calls[0][0];
+      expect(sent).toMatchObject({
+        type: 'IG',
+        message: 'mirá esto',
+        attachments: ['https://cdn.app.com/a.pdf'],
       });
       expect(sent).not.toHaveProperty('whatsappMedia');
     });

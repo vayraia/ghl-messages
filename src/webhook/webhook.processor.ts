@@ -10,7 +10,12 @@ import {
   buildNamedCustomFields,
   NamedCustomField,
 } from './ghl-contact-client';
-import { GhlReply, inferImageMimeType } from './ghl-reply';
+import {
+  GhlReply,
+  inferImageMimeType,
+  inferDocumentMimeType,
+  basenameFromUrl,
+} from './ghl-reply';
 import { GroupFetcher } from './group-fetcher';
 import { InsistenceClient } from './insistence-client';
 import { FlushJobData, MessageDebouncer } from './message-debouncer';
@@ -210,9 +215,9 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
       if (i > 0) await sleep(CHAT_MESSAGE_DELAY_MS);
       const message = chat.messages[i];
       try {
-        // WhatsApp image replies use GHL's structured `whatsapp.media` body
-        // (with the group's `fromNumberId` when available); every other case
-        // uses the flat message/attachments shape.
+        // WhatsApp image/file replies use GHL's structured `whatsapp.media`
+        // body (with the group's `fromNumberId` when available); every other
+        // case uses the flat message/attachments shape.
         let result;
         if (message.type === 'image' && replyChannel === 'WhatsApp') {
           const caption = message.caption ?? '';
@@ -228,6 +233,24 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
               url: message.url,
               caption,
               mimeType: inferImageMimeType(message.url),
+              fromNumberId: group.whatsappNumberId,
+            },
+          });
+        } else if (message.type === 'file' && replyChannel === 'WhatsApp') {
+          const caption = message.caption ?? '';
+          result = await this.ghl.send({
+            jobId: String(job.id),
+            contactId,
+            message: caption,
+            type: replyChannel,
+            apiKey: group.apiKey,
+            locationId,
+            whatsappMedia: {
+              type: 'document',
+              name: message.filename ?? basenameFromUrl(message.url),
+              url: message.url,
+              caption,
+              mimeType: inferDocumentMimeType(message.url),
               fromNumberId: group.whatsappNumberId,
             },
           });
@@ -307,9 +330,9 @@ interface GhlSendPayload {
 
 /**
  * Maps a single `/chat` reply element to the body fields used by
- * `POST /conversations/messages`. The image `caption` becomes the message
- * body so it renders as a caption in the receiving channel; `file` sends
- * the URL with an empty message for now (filename is intentionally ignored).
+ * `POST /conversations/messages` on the flat (non-WhatsApp-media) path. Both
+ * `image` and `file` use their `caption` as the message body so it renders as
+ * a caption in the receiving channel; the URL goes in `attachments`.
  */
 function toGhlPayload(m: ChatMessage): GhlSendPayload {
   switch (m.type) {
@@ -318,7 +341,7 @@ function toGhlPayload(m: ChatMessage): GhlSendPayload {
     case 'image':
       return { message: m.caption ?? '', attachments: [m.url] };
     case 'file':
-      return { message: '', attachments: [m.url] };
+      return { message: m.caption ?? '', attachments: [m.url] };
   }
 }
 

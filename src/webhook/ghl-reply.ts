@@ -7,15 +7,17 @@ import { ReplyChannel } from './channel-resolver';
 
 /**
  * Structured WhatsApp media send. When present (only for `type: 'WhatsApp'`
- * image replies), GHL receives the nested `whatsapp.media` body instead of the
- * flat `attachments` array. `fromNumberId` is optional: when the group has no
- * `whatsapp_number_id` configured the block is sent without it.
+ * image/file replies), GHL receives the nested `whatsapp.media` body instead of
+ * the flat `attachments` array. `name` carries the document filename (documents
+ * only). `fromNumberId` is optional: when the group has no `whatsapp_number_id`
+ * configured the block is sent without it.
  */
 export interface WhatsappMedia {
-  type: 'image';
+  type: 'image' | 'document';
   url: string;
   caption: string;
   mimeType: string;
+  name?: string;
   fromNumberId?: string;
 }
 
@@ -115,7 +117,13 @@ interface WhatsappMediaBody {
   whatsapp: {
     type: 'media';
     fromNumberId?: string;
-    media: { type: 'image'; url: string; caption: string; mimeType: string };
+    media: {
+      type: 'image' | 'document';
+      name?: string;
+      url: string;
+      caption: string;
+      mimeType: string;
+    };
   };
 }
 
@@ -134,7 +142,7 @@ interface FlatSendBody {
  */
 function buildSendBody(input: GhlReplyInput): WhatsappMediaBody | FlatSendBody {
   if (input.whatsappMedia) {
-    const { fromNumberId, url, caption, mimeType } = input.whatsappMedia;
+    const { type, name, fromNumberId, url, caption, mimeType } = input.whatsappMedia;
     return {
       contactId: input.contactId,
       ...(input.locationId ? { locationId: input.locationId } : {}),
@@ -143,7 +151,7 @@ function buildSendBody(input: GhlReplyInput): WhatsappMediaBody | FlatSendBody {
       whatsapp: {
         type: 'media',
         ...(fromNumberId ? { fromNumberId } : {}),
-        media: { type: 'image', url, caption, mimeType },
+        media: { type, ...(name ? { name } : {}), url, caption, mimeType },
       },
     };
   }
@@ -160,14 +168,21 @@ function buildSendBody(input: GhlReplyInput): WhatsappMediaBody | FlatSendBody {
 }
 
 /**
+ * Returns the lower-cased file extension of a URL (without the dot), ignoring
+ * any query string or fragment. Empty string when there is no extension.
+ */
+function urlExtension(url: string): string {
+  const path = url.split(/[?#]/, 1)[0];
+  const dot = path.lastIndexOf('.');
+  return dot >= 0 ? path.slice(dot + 1).toLowerCase() : '';
+}
+
+/**
  * Infers a WhatsApp-acceptable image MIME type from the URL's file extension.
  * Falls back to `image/jpeg` for unknown or extension-less URLs.
  */
 export function inferImageMimeType(url: string): string {
-  const path = url.split(/[?#]/, 1)[0];
-  const dot = path.lastIndexOf('.');
-  const ext = dot >= 0 ? path.slice(dot + 1).toLowerCase() : '';
-  switch (ext) {
+  switch (urlExtension(url)) {
     case 'png':
       return 'image/png';
     case 'webp':
@@ -179,6 +194,38 @@ export function inferImageMimeType(url: string): string {
     default:
       return 'image/jpeg';
   }
+}
+
+const DOCUMENT_MIME_TYPES: Record<string, string> = {
+  pdf: 'application/pdf',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ppt: 'application/vnd.ms-powerpoint',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  txt: 'text/plain',
+  csv: 'text/csv',
+  zip: 'application/zip',
+};
+
+/**
+ * Infers a document MIME type from the URL's file extension. Falls back to
+ * `application/octet-stream` for unknown or extension-less URLs.
+ */
+export function inferDocumentMimeType(url: string): string {
+  return DOCUMENT_MIME_TYPES[urlExtension(url)] ?? 'application/octet-stream';
+}
+
+/**
+ * Last path segment of a URL (ignoring query/fragment), used as the document
+ * `name` fallback when the chat reply carries no `filename`. Empty string when
+ * the URL has no usable segment.
+ */
+export function basenameFromUrl(url: string): string {
+  const path = url.split(/[?#]/, 1)[0];
+  const segment = path.slice(path.lastIndexOf('/') + 1);
+  return segment;
 }
 
 function summarizeBody(body: unknown): string {

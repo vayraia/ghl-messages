@@ -280,9 +280,11 @@ The `type` field is the resolved `replyChannel`, picked from (in order):
 `contact.lastAttributionSource.medium` → `contact.attributionSource.medium`
 → `customData.channel` → `message.type`. Falls back to `WhatsApp`.
 
-A `/chat` reply element of `type: image` on the **WhatsApp** channel is sent
-with GHL's structured `whatsapp.media` body instead of the flat `attachments`
-array:
+A `/chat` reply element of `type: image` or `type: file` on the **WhatsApp**
+channel is sent with GHL's structured `whatsapp.media` body instead of the flat
+`attachments` array.
+
+Image (`media.type: image`):
 
 ```json
 {
@@ -303,14 +305,41 @@ array:
 }
 ```
 
+File / document (`media.type: document`, adds `media.name`):
+
+```json
+{
+  "contactId": "c_01H...",
+  "locationId": "wfS46PMu1sOToYyj38Mq",
+  "type": "WhatsApp",
+  "message": "<caption>",
+  "whatsapp": {
+    "type": "media",
+    "fromNumberId": "1130377746823770",
+    "media": {
+      "type": "document",
+      "name": "cotizacion-1234.pdf",
+      "url": "https://.../media/abc.pdf",
+      "caption": "<caption>",
+      "mimeType": "application/pdf"
+    }
+  }
+}
+```
+
 - `fromNumberId` comes from the group's `general_settings.whatsapp_number_id`.
   When the group has no `whatsapp_number_id`, the same `whatsapp.media` body is
   sent **without** the `fromNumberId` key.
-- `mimeType` is inferred from the URL extension (`.png`→`image/png`,
-  `.webp`→`image/webp`, `.gif`→`image/gif`, everything else →`image/jpeg`).
-- This applies **only** to `image` replies on WhatsApp. `file` replies, images
-  on other channels (IG/FB/…), and `text` replies keep the flat
-  `message`/`attachments` shape shown above.
+- `mimeType` is inferred from the URL extension. Images: `.png`→`image/png`,
+  `.webp`→`image/webp`, `.gif`→`image/gif`, else `image/jpeg`. Documents:
+  `.pdf`→`application/pdf`, `.doc/.docx`, `.xls/.xlsx`, `.ppt/.pptx`, `.txt`,
+  `.csv`, `.zip`, else `application/octet-stream`.
+- `media.name` (documents only) is the reply's `filename`, falling back to the
+  URL basename; omitted when neither yields a value.
+- This structured shape applies **only** on WhatsApp. On other channels
+  (IG/FB/…) `image` and `file` replies keep the flat `message`/`attachments`
+  shape — the reply's `caption` becomes `message`. `text` replies always use
+  the flat shape.
 
 Failure handling matches the chat call: 4xx → no retry, 5xx / network →
 retried by BullMQ. Because both downstream calls live inside one job, a

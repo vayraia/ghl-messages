@@ -273,6 +273,33 @@ describe('WebhookForwarder', () => {
     ]);
   });
 
+  it('parses a file message carrying both filename and caption', async () => {
+    const { forwarder, post } = makeForwarder();
+    post.mockResolvedValue({
+      status: 200,
+      data: {
+        messages: [
+          {
+            type: 'file',
+            url: 'https://cdn.ejemplo.com/docs/cotizacion-1234.pdf',
+            filename: 'cotizacion-1234.pdf',
+            caption: 'Cotización válida por 7 días',
+          },
+        ],
+      },
+    });
+
+    const result = await forwarder.forward(baseReq);
+    expect(result.messages).toEqual([
+      {
+        type: 'file',
+        url: 'https://cdn.ejemplo.com/docs/cotizacion-1234.pdf',
+        filename: 'cotizacion-1234.pdf',
+        caption: 'Cotización válida por 7 días',
+      },
+    ]);
+  });
+
   it('throws UnrecoverableError on 2xx without a messages field', async () => {
     const { forwarder, post } = makeForwarder();
     post.mockResolvedValue({ status: 200, data: { something: 'else' } });

@@ -25,7 +25,7 @@ export interface ChatRequest {
 export type ChatMessage =
   | { type: 'text'; content: string }
   | { type: 'image'; url: string; caption?: string }
-  | { type: 'file'; url: string; filename?: string };
+  | { type: 'file'; url: string; filename?: string; caption?: string };
 
 export interface ChatResponse {
   messages: ChatMessage[];
@@ -205,7 +205,13 @@ function parseChatMessage(entry: unknown): ChatMessage | undefined {
       const url = e.url;
       if (typeof url !== 'string' || url.length === 0) return undefined;
       const filename = typeof e.filename === 'string' ? e.filename : undefined;
-      return { type: 'file', url, ...(filename !== undefined ? { filename } : {}) };
+      const caption = typeof e.caption === 'string' ? e.caption : undefined;
+      return {
+        type: 'file',
+        url,
+        ...(filename !== undefined ? { filename } : {}),
+        ...(caption !== undefined ? { caption } : {}),
+      };
     }
     default:
       return undefined;

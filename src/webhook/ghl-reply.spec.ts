@@ -1,7 +1,13 @@
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosError } from 'axios';
 import { UnrecoverableError } from 'bullmq';
-import { GhlReply, GhlReplyInput, inferImageMimeType } from './ghl-reply';
+import {
+  GhlReply,
+  GhlReplyInput,
+  inferImageMimeType,
+  inferDocumentMimeType,
+  basenameFromUrl,
+} from './ghl-reply';
 import { AppEnv } from '../config/env.validation';
 
 jest.mock('axios');
@@ -169,6 +175,101 @@ describe('GhlReply', () => {
       url: 'https://cdn.app.com/img.png',
       caption: '',
       mimeType: 'image/png',
+    });
+  });
+
+  it('sends the structured whatsapp.media document body with name and fromNumberId', async () => {
+    const { ghl, post } = makeGhl();
+    post.mockResolvedValue({ status: 201, data: { ok: true } });
+
+    await ghl.send({
+      ...baseInput,
+      message: 'Prueba mensje con pdf',
+      locationId: 'wfS46PMu1sOToYyj38Mq',
+      whatsappMedia: {
+        type: 'document',
+        name: 'sample.pdf',
+        url: 'https://assets.cdn.filesafe.space/loc/media/abc.pdf',
+        caption: 'Prueba mensje con pdf',
+        mimeType: 'application/pdf',
+        fromNumberId: '1130377746823770',
+      },
+    });
+
+    const [, body] = post.mock.calls[0];
+    expect(body).toEqual({
+      contactId: 'c-1',
+      locationId: 'wfS46PMu1sOToYyj38Mq',
+      type: 'WhatsApp',
+      message: 'Prueba mensje con pdf',
+      whatsapp: {
+        type: 'media',
+        fromNumberId: '1130377746823770',
+        media: {
+          type: 'document',
+          name: 'sample.pdf',
+          url: 'https://assets.cdn.filesafe.space/loc/media/abc.pdf',
+          caption: 'Prueba mensje con pdf',
+          mimeType: 'application/pdf',
+        },
+      },
+    });
+    expect(body).not.toHaveProperty('attachments');
+  });
+
+  it('omits media.name when the document has no name', async () => {
+    const { ghl, post } = makeGhl();
+    post.mockResolvedValue({ status: 201, data: { ok: true } });
+
+    await ghl.send({
+      ...baseInput,
+      locationId: 'loc-1',
+      whatsappMedia: {
+        type: 'document',
+        url: 'https://cdn.app.com/doc.pdf',
+        caption: '',
+        mimeType: 'application/pdf',
+        name: '',
+      },
+    });
+
+    const [, body] = post.mock.calls[0];
+    expect(body.whatsapp.media).not.toHaveProperty('name');
+    expect(body.whatsapp).not.toHaveProperty('fromNumberId');
+  });
+
+  describe('inferDocumentMimeType', () => {
+    it.each([
+      ['https://cdn.app.com/a.pdf', 'application/pdf'],
+      ['https://cdn.app.com/a.PDF', 'application/pdf'],
+      ['https://cdn.app.com/a.doc', 'application/msword'],
+      [
+        'https://cdn.app.com/a.docx',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      ],
+      ['https://cdn.app.com/a.xls', 'application/vnd.ms-excel'],
+      [
+        'https://cdn.app.com/a.xlsx',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      ],
+      ['https://cdn.app.com/a.csv', 'text/csv'],
+      ['https://cdn.app.com/a.zip', 'application/zip'],
+      ['https://cdn.app.com/a.pdf?sig=abc', 'application/pdf'],
+      ['https://cdn.app.com/a', 'application/octet-stream'],
+      ['https://cdn.app.com/a.xyz', 'application/octet-stream'],
+    ])('maps %s to %s', (url, expected) => {
+      expect(inferDocumentMimeType(url)).toBe(expected);
+    });
+  });
+
+  describe('basenameFromUrl', () => {
+    it.each([
+      ['https://cdn.app.com/docs/cotizacion-1234.pdf', 'cotizacion-1234.pdf'],
+      ['https://cdn.app.com/media/abc.pdf?sig=x&y=1', 'abc.pdf'],
+      ['https://cdn.app.com/a.pdf#frag', 'a.pdf'],
+      ['https://cdn.app.com/trailing/', ''],
+    ])('extracts the basename of %s as %s', (url, expected) => {
+      expect(basenameFromUrl(url)).toBe(expected);
     });
   });
 
