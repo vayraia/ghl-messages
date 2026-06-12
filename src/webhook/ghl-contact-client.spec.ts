@@ -11,9 +11,7 @@ const mockedAxios = axios as jest.Mocked<typeof axios>;
 function makeClient() {
   const get = jest.fn();
   const put = jest.fn();
-  mockedAxios.create.mockReturnValue({ get, put } as unknown as ReturnType<
-    typeof axios.create
-  >);
+  mockedAxios.create.mockReturnValue({ get, put } as unknown as ReturnType<typeof axios.create>);
 
   const env: Record<string, string | number> = {
     GHL_API_BASE_URL: 'https://services.example.com',
@@ -113,6 +111,33 @@ describe('GhlContactClient', () => {
       expect(missing.firstName).toBeUndefined();
     });
 
+    it('extracts assignedTo (top-level and nested) and omits it when blank/missing', async () => {
+      const { client, get } = makeClient();
+      get.mockResolvedValueOnce({
+        status: 200,
+        data: { assignedTo: 'QulqSPUfFcNHSIfoHdVR', customFields: [] },
+      });
+      get.mockResolvedValueOnce({
+        status: 200,
+        data: { contact: { assignedTo: '  user_2  ', customFields: [] } },
+      });
+      get.mockResolvedValueOnce({
+        status: 200,
+        data: { assignedTo: '   ', customFields: [] },
+      });
+      get.mockResolvedValueOnce({ status: 200, data: { customFields: [] } });
+
+      const top = await client.get({ jobId: 'j', contactId: 'c_1', apiKey: 'k' });
+      const nested = await client.get({ jobId: 'j', contactId: 'c_2', apiKey: 'k' });
+      const blank = await client.get({ jobId: 'j', contactId: 'c_3', apiKey: 'k' });
+      const missing = await client.get({ jobId: 'j', contactId: 'c_4', apiKey: 'k' });
+
+      expect(top.assignedTo).toBe('QulqSPUfFcNHSIfoHdVR');
+      expect(nested.assignedTo).toBe('user_2');
+      expect(blank.assignedTo).toBeUndefined();
+      expect(missing.assignedTo).toBeUndefined();
+    });
+
     it('returns customFields=[] when shape is unexpected', async () => {
       const { client, get } = makeClient();
       get.mockResolvedValue({ status: 200, data: { customFields: 'oops' } });
@@ -154,18 +179,16 @@ describe('GhlContactClient', () => {
       const { client, get } = makeClient();
       get.mockResolvedValue({ status: 401, data: { error: 'unauthorized' } });
 
-      await expect(
-        client.get({ jobId: 'j', contactId: 'c', apiKey: 'k' }),
-      ).rejects.toBeInstanceOf(UnrecoverableError);
+      await expect(client.get({ jobId: 'j', contactId: 'c', apiKey: 'k' })).rejects.toBeInstanceOf(
+        UnrecoverableError,
+      );
     });
 
     it('throws a regular Error on 5xx (retryable)', async () => {
       const { client, get } = makeClient();
       get.mockResolvedValue({ status: 503, data: 'down' });
 
-      const err = await client
-        .get({ jobId: 'j', contactId: 'c', apiKey: 'k' })
-        .catch((e) => e);
+      const err = await client.get({ jobId: 'j', contactId: 'c', apiKey: 'k' }).catch((e) => e);
 
       expect(err).toBeInstanceOf(Error);
       expect(err).not.toBeInstanceOf(UnrecoverableError);
@@ -178,9 +201,7 @@ describe('GhlContactClient', () => {
       transport.code = 'ETIMEDOUT';
       get.mockRejectedValue(transport);
 
-      const err = await client
-        .get({ jobId: 'j', contactId: 'c', apiKey: 'k' })
-        .catch((e) => e);
+      const err = await client.get({ jobId: 'j', contactId: 'c', apiKey: 'k' }).catch((e) => e);
 
       expect(err).toBeInstanceOf(Error);
       expect(err).not.toBeInstanceOf(UnrecoverableError);
@@ -258,6 +279,134 @@ describe('GhlContactClient', () => {
       expect(err).toBeInstanceOf(Error);
       expect(err).not.toBeInstanceOf(UnrecoverableError);
       expect(err.message).toMatch(/ECONNREFUSED/);
+    });
+  });
+
+  describe('getUser', () => {
+    it('GETs /users/:id with bearer auth and returns { id, name, email, phone }', async () => {
+      const { client, get } = makeClient();
+      get.mockResolvedValue({
+        status: 200,
+        data: {
+          id: 'QulqSPUfFcNHSIfoHdVR',
+          name: 'Maria Lopez',
+          email: 'maria@example.com',
+          phone: '+51987654321',
+        },
+      });
+
+      const user = await client.getUser({
+        jobId: 'j',
+        userId: 'QulqSPUfFcNHSIfoHdVR',
+        apiKey: 'pit-xxx',
+      });
+
+      expect(get).toHaveBeenCalledWith('/users/QulqSPUfFcNHSIfoHdVR', {
+        headers: { Authorization: 'Bearer pit-xxx' },
+      });
+      expect(user).toEqual({
+        id: 'QulqSPUfFcNHSIfoHdVR',
+        name: 'Maria Lopez',
+        email: 'maria@example.com',
+        phone: '+51987654321',
+      });
+    });
+
+    it('omits phone when it is absent or blank', async () => {
+      const { client, get } = makeClient();
+      get.mockResolvedValueOnce({ status: 200, data: { id: 'u1', name: 'Maria', phone: '   ' } });
+      get.mockResolvedValueOnce({ status: 200, data: { id: 'u2', name: 'Maria' } });
+
+      const blank = await client.getUser({ jobId: 'j', userId: 'u1', apiKey: 'k' });
+      const missing = await client.getUser({ jobId: 'j', userId: 'u2', apiKey: 'k' });
+
+      expect(blank).not.toHaveProperty('phone');
+      expect(missing).not.toHaveProperty('phone');
+    });
+
+    it('falls back to firstName/lastName when name is absent', async () => {
+      const { client, get } = makeClient();
+      get.mockResolvedValue({
+        status: 200,
+        data: { id: 'u1', firstName: 'Maria', lastName: 'Lopez' },
+      });
+
+      const user = await client.getUser({ jobId: 'j', userId: 'u1', apiKey: 'k' });
+
+      expect(user).toEqual({ id: 'u1', name: 'Maria Lopez' });
+    });
+
+    it('reads from a nested user wrapper and omits blank email/name', async () => {
+      const { client, get } = makeClient();
+      get.mockResolvedValue({
+        status: 200,
+        data: { user: { id: 'u1', name: '  ', email: '   ' } },
+      });
+
+      const user = await client.getUser({ jobId: 'j', userId: 'u1', apiKey: 'k' });
+
+      expect(user).toEqual({ id: 'u1' });
+    });
+
+    it('falls back to the requested userId when the response omits id', async () => {
+      const { client, get } = makeClient();
+      get.mockResolvedValue({ status: 200, data: { name: 'Maria' } });
+
+      const user = await client.getUser({ jobId: 'j', userId: 'u1', apiKey: 'k' });
+
+      expect(user).toEqual({ id: 'u1', name: 'Maria' });
+    });
+
+    it('caches per user id and does not re-fetch within the TTL', async () => {
+      const { client, get } = makeClient();
+      get.mockResolvedValue({ status: 200, data: { id: 'u1', name: 'Maria' } });
+
+      await client.getUser({ jobId: 'j', userId: 'u1', apiKey: 'k' });
+      await client.getUser({ jobId: 'j', userId: 'u1', apiKey: 'k' });
+
+      expect(get).toHaveBeenCalledTimes(1);
+    });
+
+    it('encodes special characters in the userId path segment', async () => {
+      const { client, get } = makeClient();
+      get.mockResolvedValue({ status: 200, data: { id: 'u', name: 'X' } });
+
+      await client.getUser({ jobId: 'j', userId: 'u/x y', apiKey: 'k' });
+
+      expect(get.mock.calls[0][0]).toBe('/users/u%2Fx%20y');
+    });
+
+    it('throws UnrecoverableError on 4xx', async () => {
+      const { client, get } = makeClient();
+      get.mockResolvedValue({ status: 404, data: { error: 'not found' } });
+
+      await expect(
+        client.getUser({ jobId: 'j', userId: 'u1', apiKey: 'k' }),
+      ).rejects.toBeInstanceOf(UnrecoverableError);
+    });
+
+    it('throws a regular Error on 5xx (retryable)', async () => {
+      const { client, get } = makeClient();
+      get.mockResolvedValue({ status: 503, data: 'down' });
+
+      const err = await client.getUser({ jobId: 'j', userId: 'u1', apiKey: 'k' }).catch((e) => e);
+
+      expect(err).toBeInstanceOf(Error);
+      expect(err).not.toBeInstanceOf(UnrecoverableError);
+      expect(err.message).toMatch(/503/);
+    });
+
+    it('throws a regular Error on transport failure (retryable)', async () => {
+      const { client, get } = makeClient();
+      const transport = new Error('connect ETIMEDOUT') as AxiosError;
+      transport.code = 'ETIMEDOUT';
+      get.mockRejectedValue(transport);
+
+      const err = await client.getUser({ jobId: 'j', userId: 'u1', apiKey: 'k' }).catch((e) => e);
+
+      expect(err).toBeInstanceOf(Error);
+      expect(err).not.toBeInstanceOf(UnrecoverableError);
+      expect(err.message).toMatch(/ETIMEDOUT/);
     });
   });
 

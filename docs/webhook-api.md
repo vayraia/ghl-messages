@@ -155,7 +155,8 @@ x-request-id: <uuid>
     "name": "Fabio",
     "custom_fields": [
       { "id": "cf_1", "name": "Reprogramar Cita", "value": "https://..." }
-    ]
+    ],
+    "assigned_user": { "id": "QulqSPUfFcNHSIfoHdVR", "name": "Maria Lopez", "email": "maria@...", "phone": "+51987654321" }
   },
   "message": { "body": "hola\nbuen día\nquiero info" }
 }
@@ -178,9 +179,10 @@ GHL  ──POST──►  /v1/webhook
                                                 ▼
                                   WebhookProcessor.process
                                           ├─ drain Redis list (LRANGE + DEL atomic)
-                                          ├─ GET  $GHL_API_BASE_URL/contacts/{id}   (firstName + custom fields)
+                                          ├─ GET  $GHL_API_BASE_URL/contacts/{id}   (firstName + custom fields + assignedTo)
+                                          ├─ GET  $GHL_API_BASE_URL/users/{assignedTo}   (assigned agent — best-effort, cached)
                                           ├─ POST $CHAT_API_URL/chat
-                                          │     body: { agent_id, contact_id, contact_data: { ghl_token, location_id, name?, custom_fields? }, message: { body, type } }
+                                          │     body: { agent_id, contact_id, contact_data: { ghl_token, location_id, name?, custom_fields?, assigned_user? }, message: { body, type } }
                                           │     → expects { messages: [...] }
                                           └─ POST $GHL_API_BASE_URL/conversations/messages
                                                 Authorization: Bearer $GHL_API_KEY
@@ -202,7 +204,8 @@ The forwarder POSTs:
     "name": "Fabio",
     "custom_fields": [
       { "id": "cf_1", "name": "Reprogramar Cita", "value": "https://..." }
-    ]
+    ],
+    "assigned_user": { "id": "QulqSPUfFcNHSIfoHdVR", "name": "Maria Lopez", "email": "maria@...", "phone": "+51987654321" }
   },
   "message": { "body": "hola\nbuen día", "type": "WhatsApp" }
 }
@@ -227,6 +230,16 @@ id, `name` is resolved from `GET $GHL_API_BASE_URL/locations/{id}/customFields`
 string. Resolution is best-effort: if the contact has no custom fields, or
 the definitions lookup fails, `custom_fields` is omitted entirely rather
 than failing the job.
+
+`contact_data.assigned_user` is the contact's assigned GHL user (agent),
+carrying `{ id, name?, email?, phone? }`. The `id` comes from the contact's
+`assignedTo` (read off the same `GET /contacts/{id}`), and `name`/`email`/`phone`
+are resolved from `GET $GHL_API_BASE_URL/users/{assignedTo}` (cached per
+user id). `name` prefers the user's explicit `name`, falling back to
+`firstName`/`lastName`; `email` and `phone` are included only when present
+and non-blank. Resolution is best-effort: if the contact has no `assignedTo`,
+or the user lookup fails, `assigned_user` is omitted entirely rather than
+failing the job.
 
 `message.type` is the originating channel of the inbound message, one of
 `SMS`, `RCS`, `Email`, `WhatsApp`, `IG`, `FB`, `Custom`, `Live_Chat`,

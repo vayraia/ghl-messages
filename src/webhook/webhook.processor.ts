@@ -9,13 +9,9 @@ import {
   GhlContactClient,
   buildNamedCustomFields,
   NamedCustomField,
+  AssignedUser,
 } from './ghl-contact-client';
-import {
-  GhlReply,
-  inferImageMimeType,
-  inferDocumentMimeType,
-  basenameFromUrl,
-} from './ghl-reply';
+import { GhlReply, inferImageMimeType, inferDocumentMimeType, basenameFromUrl } from './ghl-reply';
 import { GroupFetcher } from './group-fetcher';
 import { InsistenceClient } from './insistence-client';
 import { FlushJobData, MessageDebouncer } from './message-debouncer';
@@ -193,6 +189,25 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
       }
     }
 
+    // Resolve the contact's assigned GHL user (agent) into { id, name, email }
+    // for the chat API. Best-effort: if the lookup fails we forward without
+    // `assigned_user` rather than fail the job.
+    let assignedUser: AssignedUser | undefined;
+    if (contact.assignedTo) {
+      try {
+        assignedUser = await this.contactClient.getUser({
+          jobId: String(job.id),
+          userId: contact.assignedTo,
+          apiKey: group.apiKey,
+        });
+      } catch (err) {
+        this.logger.warn(
+          { jobId: job.id, contactId, userId: contact.assignedTo, err: (err as Error).message },
+          'Assigned user resolution failed — forwarding without assigned_user',
+        );
+      }
+    }
+
     const chat = await this.forwarder.forward({
       jobId: String(job.id),
       agentId,
@@ -203,6 +218,7 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
       channel: replyChannel,
       contactName: contact.firstName,
       customFields,
+      assignedUser,
       attachments: attachments.length > 0 ? attachments : undefined,
       receivedAt,
       requestId,

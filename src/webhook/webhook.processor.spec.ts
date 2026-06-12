@@ -22,6 +22,7 @@ function makeProcessor() {
   const contactClient = {
     get: jest.fn().mockResolvedValue({ status: 200, customFields: [], firstName: undefined }),
     listCustomFields: jest.fn().mockResolvedValue(new Map<string, string>()),
+    getUser: jest.fn(),
     disableAiField: jest.fn(),
   } as unknown as GhlContactClient;
   const config = {
@@ -148,15 +149,15 @@ describe('WebhookProcessor.process', () => {
 
     await processor.process(makeJob());
 
-    expect(insistence.schedule).toHaveBeenCalledWith(
-      expect.objectContaining({ schedule }),
-    );
+    expect(insistence.schedule).toHaveBeenCalledWith(expect.objectContaining({ schedule }));
   });
 
   it('throws UnrecoverableError when locationId is missing on the conversation', async () => {
     const { processor, debouncer, forwarder, ghl, groupFetcher } = makeProcessor();
 
-    (debouncer.drain as jest.Mock).mockResolvedValue([{ ...sampleItems[0], locationId: undefined }]);
+    (debouncer.drain as jest.Mock).mockResolvedValue([
+      { ...sampleItems[0], locationId: undefined },
+    ]);
 
     await expect(processor.process(makeJob())).rejects.toBeInstanceOf(UnrecoverableError);
     expect(groupFetcher.fetch).not.toHaveBeenCalled();
@@ -168,7 +169,9 @@ describe('WebhookProcessor.process', () => {
     const { processor, debouncer, forwarder, ghl, groupFetcher } = makeProcessor();
 
     (debouncer.drain as jest.Mock).mockResolvedValue(sampleItems);
-    (groupFetcher.fetch as jest.Mock).mockRejectedValue(new Error('Group fetch returned 503: down'));
+    (groupFetcher.fetch as jest.Mock).mockRejectedValue(
+      new Error('Group fetch returned 503: down'),
+    );
 
     await expect(processor.process(makeJob())).rejects.toThrow(/503/);
     expect(forwarder.forward).not.toHaveBeenCalled();
@@ -457,6 +460,87 @@ describe('WebhookProcessor.process', () => {
     });
   });
 
+  describe('assigned user resolution', () => {
+    function setupHappyPathMocks(p: ReturnType<typeof makeProcessor>) {
+      (p.debouncer.drain as jest.Mock).mockResolvedValue(sampleItems);
+      (p.forwarder.forward as jest.Mock).mockResolvedValue({
+        messages: [{ type: 'text', content: 'reply' }],
+        durationMs: 1,
+      });
+      (p.ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 1 });
+      (p.insistence.schedule as jest.Mock).mockResolvedValue(undefined);
+      (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({ apiKey: 'k' });
+    }
+
+    it('resolves the assigned user and forwards it as assignedUser', async () => {
+      const p = makeProcessor();
+      setupHappyPathMocks(p);
+      (p.contactClient.get as jest.Mock).mockResolvedValue({
+        status: 200,
+        customFields: [],
+        assignedTo: 'QulqSPUfFcNHSIfoHdVR',
+      });
+      (p.contactClient.getUser as jest.Mock).mockResolvedValue({
+        id: 'QulqSPUfFcNHSIfoHdVR',
+        name: 'Maria Lopez',
+        email: 'maria@example.com',
+      });
+
+      await p.processor.process(makeJob());
+
+      expect(p.contactClient.getUser).toHaveBeenCalledWith({
+        jobId: 'job-1',
+        userId: 'QulqSPUfFcNHSIfoHdVR',
+        apiKey: 'k',
+      });
+      expect(p.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({
+          assignedUser: {
+            id: 'QulqSPUfFcNHSIfoHdVR',
+            name: 'Maria Lopez',
+            email: 'maria@example.com',
+          },
+        }),
+      );
+    });
+
+    it('skips the lookup and forwards undefined when the contact has no assignedTo', async () => {
+      const p = makeProcessor();
+      setupHappyPathMocks(p);
+      (p.contactClient.get as jest.Mock).mockResolvedValue({
+        status: 200,
+        customFields: [],
+        assignedTo: undefined,
+      });
+
+      await p.processor.process(makeJob());
+
+      expect(p.contactClient.getUser).not.toHaveBeenCalled();
+      expect(p.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({ assignedUser: undefined }),
+      );
+    });
+
+    it('degrades gracefully and still forwards when the user lookup throws', async () => {
+      const p = makeProcessor();
+      setupHappyPathMocks(p);
+      (p.contactClient.get as jest.Mock).mockResolvedValue({
+        status: 200,
+        customFields: [],
+        assignedTo: 'u1',
+      });
+      (p.contactClient.getUser as jest.Mock).mockRejectedValue(new Error('user GET 503'));
+
+      const result = await p.processor.process(makeJob());
+
+      expect(p.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({ assignedUser: undefined }),
+      );
+      expect(p.ghl.send).toHaveBeenCalled();
+      expect(result).toMatchObject({ ok: true });
+    });
+  });
+
   describe('inbound source', () => {
     function inboundJob(): Job<FlushJobData, unknown, string> {
       return makeJob({
@@ -617,12 +701,12 @@ describe('WebhookProcessor.process', () => {
     let setTimeoutSpy: jest.SpyInstance;
 
     beforeEach(() => {
-      setTimeoutSpy = jest
-        .spyOn(global, 'setTimeout')
-        .mockImplementation(((cb: (..._args: unknown[]) => void) => {
-          cb();
-          return 0 as unknown as ReturnType<typeof setTimeout>;
-        }) as unknown as typeof setTimeout);
+      setTimeoutSpy = jest.spyOn(global, 'setTimeout').mockImplementation(((
+        cb: (..._args: unknown[]) => void,
+      ) => {
+        cb();
+        return 0 as unknown as ReturnType<typeof setTimeout>;
+      }) as unknown as typeof setTimeout);
     });
 
     afterEach(() => {
@@ -946,7 +1030,12 @@ describe('WebhookProcessor.process', () => {
       });
       (p.forwarder.forward as jest.Mock).mockResolvedValue({
         messages: [
-          { type: 'file', url: 'https://cdn.app.com/a.pdf', filename: 'a.pdf', caption: 'mirá esto' },
+          {
+            type: 'file',
+            url: 'https://cdn.app.com/a.pdf',
+            filename: 'a.pdf',
+            caption: 'mirá esto',
+          },
         ],
         durationMs: 5,
       });

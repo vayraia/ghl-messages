@@ -4,7 +4,7 @@ import axios, { AxiosError, AxiosInstance } from 'axios';
 import { UnrecoverableError } from 'bullmq';
 import { AppEnv } from '../config/env.validation';
 import { REQUEST_ID_HEADER } from '../common/middleware/request-id.middleware';
-import { NamedCustomField } from './ghl-contact-client';
+import { AssignedUser, NamedCustomField } from './ghl-contact-client';
 import { ReplyChannel } from './channel-resolver';
 
 export interface ChatRequest {
@@ -17,6 +17,7 @@ export interface ChatRequest {
   channel: ReplyChannel;
   contactName?: string;
   customFields?: NamedCustomField[];
+  assignedUser?: AssignedUser;
   attachments?: string[];
   receivedAt: string;
   requestId: string | undefined;
@@ -90,6 +91,7 @@ export class WebhookForwarder {
       location_id: string;
       name?: string;
       custom_fields?: NamedCustomField[];
+      assigned_user?: AssignedUser;
     } = {
       ghl_token: req.apiKey,
       location_id: req.locationId,
@@ -99,6 +101,12 @@ export class WebhookForwarder {
     }
     if (req.customFields && req.customFields.length > 0) {
       contact_data.custom_fields = req.customFields;
+    }
+    // The contact's assigned GHL user (agent), resolved from `assignedTo`.
+    // Carries { id, name?, email? }; under its own key so it never collides
+    // with custom_fields or the reserved name.
+    if (req.assignedUser) {
+      contact_data.assigned_user = req.assignedUser;
     }
 
     const body = {

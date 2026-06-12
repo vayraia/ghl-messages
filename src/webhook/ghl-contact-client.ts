@@ -36,7 +36,26 @@ export interface GetContactResult {
   status: number;
   customFields: ContactCustomField[];
   firstName?: string;
+  assignedTo?: string;
   durationMs: number;
+}
+
+export interface GetUserInput {
+  jobId: string;
+  userId: string;
+  apiKey: string;
+}
+
+/**
+ * The assigned GHL user (agent) resolved from the contact's `assignedTo`,
+ * carrying its `id` plus best-effort `name`/`email`/`phone`. This is the shape
+ * of `contact_data.assigned_user`.
+ */
+export interface AssignedUser {
+  id: string;
+  name?: string;
+  email?: string;
+  phone?: string;
 }
 
 export interface ListCustomFieldsInput {
@@ -54,6 +73,13 @@ export interface ListCustomFieldsInput {
 const CUSTOM_FIELDS_CACHE_TTL_MS = 5 * 60_000;
 
 /**
+ * Users (the human agents a contact is assigned to) change rarely, so we cache
+ * the resolved `{ id, name, email }` per user id to keep the lookup out of the
+ * per-message hot path. Same five-minute window as the custom-field defs.
+ */
+const USER_CACHE_TTL_MS = 5 * 60_000;
+
+/**
  * HTTP client for GHL's `/contacts/:id` resource (GET to read custom fields,
  * PUT to update them). Same retry-split convention as `GhlReply`:
  *  - 2xx → success.
@@ -68,6 +94,7 @@ export class GhlContactClient {
     string,
     { expiresAt: number; defs: Map<string, string> }
   >();
+  private readonly userCache = new Map<string, { expiresAt: number; user: AssignedUser }>();
 
   constructor(config: ConfigService<AppEnv, true>) {
     const baseURL: string = config.get('GHL_API_BASE_URL', { infer: true });
@@ -110,6 +137,7 @@ export class GhlContactClient {
     if (status >= 200 && status < 300) {
       const customFields = extractCustomFields(response.data);
       const firstName = extractFirstName(response.data);
+      const assignedTo = extractAssignedTo(response.data);
       this.logger.debug(
         {
           jobId: input.jobId,
@@ -120,7 +148,7 @@ export class GhlContactClient {
         },
         'GHL contact read',
       );
-      return { status, customFields, firstName, durationMs };
+      return { status, customFields, firstName, assignedTo, durationMs };
     }
 
     const summary = summarizeBody(response.data);
@@ -213,6 +241,73 @@ export class GhlContactClient {
     throw new Error(`GHL custom fields read returned ${status}: ${summary}`);
   }
 
+  /**
+   * Resolves the contact's assigned GHL user (agent) by id via `GET /users/:id`
+   * and returns `{ id, name, email }` (cached per user id for
+   * `USER_CACHE_TTL_MS`). Used to populate `contact_data.assigned_user` so the
+   * chat API knows which human agent owns the contact.
+   *
+   * Same retry-split as `get`: 4xx → `UnrecoverableError`, 5xx/network →
+   * `Error`. Callers should treat this as best-effort and forward without
+   * `assigned_user` rather than fail the job on a throw.
+   */
+  async getUser(input: GetUserInput): Promise<AssignedUser> {
+    const now = Date.now();
+    const cached = this.userCache.get(input.userId);
+    if (cached && cached.expiresAt > now) {
+      return cached.user;
+    }
+
+    const path = `/users/${encodeURIComponent(input.userId)}`;
+    const started = Date.now();
+    let response;
+    try {
+      response = await this.client.get(path, {
+        headers: { Authorization: `Bearer ${input.apiKey}` },
+      });
+    } catch (err) {
+      const axiosErr = err as AxiosError;
+      const code = axiosErr.code ?? 'UNKNOWN';
+      this.logger.warn(
+        { jobId: input.jobId, userId: input.userId, code, msg: axiosErr.message },
+        'User read transport error',
+      );
+      throw new Error(`User read transport error (${code}): ${axiosErr.message}`);
+    }
+
+    const durationMs = Date.now() - started;
+    const { status } = response;
+
+    if (status >= 200 && status < 300) {
+      const user = extractUser(response.data, input.userId);
+      this.userCache.set(input.userId, {
+        expiresAt: now + USER_CACHE_TTL_MS,
+        user,
+      });
+      this.logger.debug(
+        { jobId: input.jobId, userId: input.userId, status, durationMs },
+        'GHL user read',
+      );
+      return user;
+    }
+
+    const summary = summarizeBody(response.data);
+
+    if (status >= 400 && status < 500) {
+      this.logger.warn(
+        { jobId: input.jobId, userId: input.userId, status, durationMs, body: summary },
+        'GHL user read rejected — non-retryable',
+      );
+      throw new UnrecoverableError(`GHL user read rejected with ${status}: ${summary}`);
+    }
+
+    this.logger.warn(
+      { jobId: input.jobId, userId: input.userId, status, durationMs, body: summary },
+      'GHL user read errored — retryable',
+    );
+    throw new Error(`GHL user read returned ${status}: ${summary}`);
+  }
+
   async disableAiField(input: DisableAiFieldInput): Promise<DisableAiFieldResult> {
     const body = {
       customFields: [
@@ -278,14 +373,85 @@ export class GhlContactClient {
 function extractFirstName(data: unknown): string | undefined {
   if (!data || typeof data !== 'object') return undefined;
   const root = data as { firstName?: unknown; contact?: { firstName?: unknown } };
-  const raw = typeof root.firstName === 'string'
-    ? root.firstName
-    : typeof root.contact?.firstName === 'string'
-      ? root.contact.firstName
-      : undefined;
+  const raw =
+    typeof root.firstName === 'string'
+      ? root.firstName
+      : typeof root.contact?.firstName === 'string'
+        ? root.contact.firstName
+        : undefined;
   if (raw === undefined) return undefined;
   const trimmed = raw.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * Extracts the `assignedTo` user id from a GHL contact GET response. Tolerates
+ * both top-level `assignedTo` and nested `contact.assignedTo`, and returns
+ * `undefined` on any missing or blank value.
+ */
+function extractAssignedTo(data: unknown): string | undefined {
+  if (!data || typeof data !== 'object') return undefined;
+  const root = data as { assignedTo?: unknown; contact?: { assignedTo?: unknown } };
+  const raw =
+    typeof root.assignedTo === 'string'
+      ? root.assignedTo
+      : typeof root.contact?.assignedTo === 'string'
+        ? root.contact.assignedTo
+        : undefined;
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * Extracts an `AssignedUser` from a GHL `GET /users/:id` response. Tolerates a
+ * top-level user object or a nested `user` wrapper. Builds `name` from an
+ * explicit `name`, falling back to `firstName`/`lastName`; `email` is included
+ * only when it is a non-blank string. `id` falls back to the requested userId
+ * when the response omits it.
+ */
+function extractUser(data: unknown, fallbackId: string): AssignedUser {
+  const root = (
+    data && typeof data === 'object'
+      ? (data as { user?: unknown }).user && typeof (data as { user?: unknown }).user === 'object'
+        ? (data as { user: Record<string, unknown> }).user
+        : (data as Record<string, unknown>)
+      : {}
+  ) as Record<string, unknown>;
+
+  const id = typeof root.id === 'string' && root.id.trim().length > 0 ? root.id.trim() : fallbackId;
+  const name = pickUserName(root);
+  const email =
+    typeof root.email === 'string' && root.email.trim().length > 0 ? root.email.trim() : undefined;
+  const phone =
+    typeof root.phone === 'string' && root.phone.trim().length > 0 ? root.phone.trim() : undefined;
+
+  return {
+    id,
+    ...(name !== undefined ? { name } : {}),
+    ...(email !== undefined ? { email } : {}),
+    ...(phone !== undefined ? { phone } : {}),
+  };
+}
+
+/**
+ * Resolves a user's display name from a GHL user object: prefers an explicit
+ * non-blank `name`, otherwise joins `firstName`/`lastName`. Returns `undefined`
+ * when nothing usable is present.
+ */
+function pickUserName(root: Record<string, unknown>): string | undefined {
+  if (typeof root.name === 'string') {
+    const trimmed = root.name.trim();
+    if (trimmed.length > 0) return trimmed;
+  }
+  const parts: string[] = [];
+  if (typeof root.firstName === 'string' && root.firstName.trim().length > 0) {
+    parts.push(root.firstName.trim());
+  }
+  if (typeof root.lastName === 'string' && root.lastName.trim().length > 0) {
+    parts.push(root.lastName.trim());
+  }
+  return parts.length > 0 ? parts.join(' ') : undefined;
 }
 
 function extractCustomFields(data: unknown): ContactCustomField[] {

@@ -116,7 +116,11 @@ describe('WebhookForwarder', () => {
       ...baseReq,
       contactName: 'Fabio',
       customFields: [
-        { id: 'cf_1', name: 'Reprogramar Cita', value: 'https://app.vayraperu.com/widget/booking/x' },
+        {
+          id: 'cf_1',
+          name: 'Reprogramar Cita',
+          value: 'https://app.vayraperu.com/widget/booking/x',
+        },
         { id: 'cf_2', name: 'Nombre Cliente', value: 'Juan' },
       ],
     });
@@ -127,7 +131,11 @@ describe('WebhookForwarder', () => {
       location_id: 'loc_abc',
       name: 'Fabio',
       custom_fields: [
-        { id: 'cf_1', name: 'Reprogramar Cita', value: 'https://app.vayraperu.com/widget/booking/x' },
+        {
+          id: 'cf_1',
+          name: 'Reprogramar Cita',
+          value: 'https://app.vayraperu.com/widget/booking/x',
+        },
         { id: 'cf_2', name: 'Nombre Cliente', value: 'Juan' },
       ],
     });
@@ -177,6 +185,49 @@ describe('WebhookForwarder', () => {
       { id: 'cf_2', name: 'location_id', value: 'HACKED' },
       { id: 'cf_3', name: 'name', value: 'HACKED' },
     ]);
+  });
+
+  it('sends the assigned user as contact_data.assigned_user when provided', async () => {
+    const { forwarder, post } = makeForwarder();
+    post.mockResolvedValue({
+      status: 200,
+      data: { messages: [{ type: 'text', content: 'ok' }] },
+    });
+
+    await forwarder.forward({
+      ...baseReq,
+      contactName: 'Fabio',
+      assignedUser: {
+        id: 'QulqSPUfFcNHSIfoHdVR',
+        name: 'Maria Lopez',
+        email: 'maria@example.com',
+      },
+    });
+
+    const [, body] = post.mock.calls[0];
+    expect(body.contact_data).toEqual({
+      ghl_token: 'pit-xxx',
+      location_id: 'loc_abc',
+      name: 'Fabio',
+      assigned_user: {
+        id: 'QulqSPUfFcNHSIfoHdVR',
+        name: 'Maria Lopez',
+        email: 'maria@example.com',
+      },
+    });
+  });
+
+  it('omits assigned_user when not provided', async () => {
+    const { forwarder, post } = makeForwarder();
+    post.mockResolvedValue({
+      status: 200,
+      data: { messages: [{ type: 'text', content: 'ok' }] },
+    });
+
+    await forwarder.forward(baseReq);
+
+    const [, body] = post.mock.calls[0];
+    expect(body.contact_data).not.toHaveProperty('assigned_user');
   });
 
   it('includes attachments in message when provided', async () => {
