@@ -105,6 +105,44 @@ describe('WebhookForwarder', () => {
     });
   });
 
+  it('emits contact_data.email and contact_data.phone when provided', async () => {
+    const { forwarder, post } = makeForwarder();
+    post.mockResolvedValue({
+      status: 200,
+      data: { messages: [{ type: 'text', content: 'ok' }] },
+    });
+
+    await forwarder.forward({
+      ...baseReq,
+      contactName: 'Fabio Coronado',
+      contactEmail: 'fabio@example.com',
+      contactPhone: '+51987654321',
+    });
+
+    const [, body] = post.mock.calls[0];
+    expect(body.contact_data).toEqual({
+      ghl_token: 'pit-xxx',
+      location_id: 'loc_abc',
+      name: 'Fabio Coronado',
+      email: 'fabio@example.com',
+      phone: '+51987654321',
+    });
+  });
+
+  it('omits contact_data.email and contact_data.phone when absent', async () => {
+    const { forwarder, post } = makeForwarder();
+    post.mockResolvedValue({
+      status: 200,
+      data: { messages: [{ type: 'text', content: 'ok' }] },
+    });
+
+    await forwarder.forward({ ...baseReq });
+
+    const [, body] = post.mock.calls[0];
+    expect(body.contact_data).not.toHaveProperty('email');
+    expect(body.contact_data).not.toHaveProperty('phone');
+  });
+
   it('sends custom fields as a structured custom_fields array', async () => {
     const { forwarder, post } = makeForwarder();
     post.mockResolvedValue({

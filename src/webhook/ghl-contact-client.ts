@@ -36,6 +36,8 @@ export interface GetContactResult {
   status: number;
   customFields: ContactCustomField[];
   firstName?: string;
+  email?: string;
+  phone?: string;
   assignedTo?: string;
   durationMs: number;
 }
@@ -137,6 +139,8 @@ export class GhlContactClient {
     if (status >= 200 && status < 300) {
       const customFields = extractCustomFields(response.data);
       const firstName = extractFirstName(response.data);
+      const email = extractContactString(response.data, 'email');
+      const phone = extractContactString(response.data, 'phone');
       const assignedTo = extractAssignedTo(response.data);
       this.logger.debug(
         {
@@ -148,7 +152,7 @@ export class GhlContactClient {
         },
         'GHL contact read',
       );
-      return { status, customFields, firstName, assignedTo, durationMs };
+      return { status, customFields, firstName, email, phone, assignedTo, durationMs };
     }
 
     const summary = summarizeBody(response.data);
@@ -378,6 +382,28 @@ function extractFirstName(data: unknown): string | undefined {
       ? root.firstName
       : typeof root.contact?.firstName === 'string'
         ? root.contact.firstName
+        : undefined;
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * Extracts a top-level string field (e.g. `email`, `phone`) from a GHL contact
+ * GET response. Tolerates both the top-level and nested `contact.<key>` shapes,
+ * and returns `undefined` on any missing or blank value.
+ */
+function extractContactString(
+  data: unknown,
+  key: 'email' | 'phone',
+): string | undefined {
+  if (!data || typeof data !== 'object') return undefined;
+  const root = data as Record<string, unknown> & { contact?: Record<string, unknown> };
+  const raw =
+    typeof root[key] === 'string'
+      ? (root[key] as string)
+      : typeof root.contact?.[key] === 'string'
+        ? (root.contact[key] as string)
         : undefined;
   if (raw === undefined) return undefined;
   const trimmed = raw.trim();

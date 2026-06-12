@@ -16,6 +16,8 @@ export interface ChatRequest {
   body: string;
   channel: ReplyChannel;
   contactName?: string;
+  contactEmail?: string;
+  contactPhone?: string;
   customFields?: NamedCustomField[];
   assignedUser?: AssignedUser;
   attachments?: string[];
@@ -90,6 +92,8 @@ export class WebhookForwarder {
       ghl_token: string;
       location_id: string;
       name?: string;
+      email?: string;
+      phone?: string;
       custom_fields?: NamedCustomField[];
       assigned_user?: AssignedUser;
     } = {
@@ -98,6 +102,12 @@ export class WebhookForwarder {
     };
     if (req.contactName) {
       contact_data.name = req.contactName;
+    }
+    if (req.contactEmail) {
+      contact_data.email = req.contactEmail;
+    }
+    if (req.contactPhone) {
+      contact_data.phone = req.contactPhone;
     }
     if (req.customFields && req.customFields.length > 0) {
       contact_data.custom_fields = req.customFields;

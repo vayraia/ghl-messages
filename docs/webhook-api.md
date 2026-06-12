@@ -153,6 +153,8 @@ x-request-id: <uuid>
     "ghl_token": "pit-...",
     "location_id": "loc_...",
     "name": "Fabio",
+    "email": "fabio@example.com",
+    "phone": "+51987654321",
     "custom_fields": [
       { "id": "cf_1", "name": "Reprogramar Cita", "value": "https://..." }
     ],
@@ -179,10 +181,10 @@ GHL  ──POST──►  /v1/webhook
                                                 ▼
                                   WebhookProcessor.process
                                           ├─ drain Redis list (LRANGE + DEL atomic)
-                                          ├─ GET  $GHL_API_BASE_URL/contacts/{id}   (firstName + custom fields + assignedTo)
+                                          ├─ GET  $GHL_API_BASE_URL/contacts/{id}   (firstName + email + phone + custom fields + assignedTo)
                                           ├─ GET  $GHL_API_BASE_URL/users/{assignedTo}   (assigned agent — best-effort, cached)
                                           ├─ POST $CHAT_API_URL/chat
-                                          │     body: { agent_id, contact_id, contact_data: { ghl_token, location_id, name?, custom_fields?, assigned_user? }, message: { body, type } }
+                                          │     body: { agent_id, contact_id, contact_data: { ghl_token, location_id, name?, email?, phone?, custom_fields?, assigned_user? }, message: { body, type } }
                                           │     → expects { messages: [...] }
                                           └─ POST $GHL_API_BASE_URL/conversations/messages
                                                 Authorization: Bearer $GHL_API_KEY
@@ -202,6 +204,8 @@ The forwarder POSTs:
     "ghl_token": "pit-...",
     "location_id": "loc_...",
     "name": "Fabio",
+    "email": "fabio@example.com",
+    "phone": "+51987654321",
     "custom_fields": [
       { "id": "cf_1", "name": "Reprogramar Cita", "value": "https://..." }
     ],
@@ -221,6 +225,11 @@ behalf of the location (read fields, create opportunities, etc.).
 on every flush (regardless of whether the group has an `ai_field_id`
 gate configured), so the same call serves both the AI toggle and the
 name lookup. When the contact has no `firstName`, `name` is omitted from
+`contact_data`.
+
+`contact_data.email` and `contact_data.phone` are the contact's own email
+and phone from the same `GET $GHL_API_BASE_URL/contacts/{id}`. Each is
+included only when present and non-blank — otherwise omitted from
 `contact_data`.
 
 `contact_data.custom_fields` is an array of the contact's custom fields,

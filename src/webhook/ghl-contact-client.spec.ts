@@ -138,6 +138,37 @@ describe('GhlContactClient', () => {
       expect(missing.assignedTo).toBeUndefined();
     });
 
+    it('extracts email/phone (top-level and nested), trimming and omitting blanks', async () => {
+      const { client, get } = makeClient();
+      get.mockResolvedValueOnce({
+        status: 200,
+        data: { email: '  fabio@example.com  ', phone: '+51987654321', customFields: [] },
+      });
+      get.mockResolvedValueOnce({
+        status: 200,
+        data: { contact: { email: 'nested@example.com', phone: '  +1555  ', customFields: [] } },
+      });
+      get.mockResolvedValueOnce({
+        status: 200,
+        data: { email: '   ', phone: '   ', customFields: [] },
+      });
+      get.mockResolvedValueOnce({ status: 200, data: { customFields: [] } });
+
+      const top = await client.get({ jobId: 'j', contactId: 'c_1', apiKey: 'k' });
+      const nested = await client.get({ jobId: 'j', contactId: 'c_2', apiKey: 'k' });
+      const blank = await client.get({ jobId: 'j', contactId: 'c_3', apiKey: 'k' });
+      const missing = await client.get({ jobId: 'j', contactId: 'c_4', apiKey: 'k' });
+
+      expect(top.email).toBe('fabio@example.com');
+      expect(top.phone).toBe('+51987654321');
+      expect(nested.email).toBe('nested@example.com');
+      expect(nested.phone).toBe('+1555');
+      expect(blank.email).toBeUndefined();
+      expect(blank.phone).toBeUndefined();
+      expect(missing.email).toBeUndefined();
+      expect(missing.phone).toBeUndefined();
+    });
+
     it('returns customFields=[] when shape is unexpected', async () => {
       const { client, get } = makeClient();
       get.mockResolvedValue({ status: 200, data: { customFields: 'oops' } });

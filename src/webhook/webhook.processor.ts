@@ -217,6 +217,8 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
       body: concatenated,
       channel: replyChannel,
       contactName: contact.firstName,
+      contactEmail: contact.email,
+      contactPhone: contact.phone,
       customFields,
       assignedUser,
       attachments: attachments.length > 0 ? attachments : undefined,
