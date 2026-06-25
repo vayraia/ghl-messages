@@ -8,8 +8,10 @@ import { ChatMessage, WebhookForwarder } from './webhook-forwarder';
 import {
   GhlContactClient,
   buildNamedCustomFields,
+  resolveFieldValueByKey,
   NamedCustomField,
   AssignedUser,
+  GetContactResult,
 } from './ghl-contact-client';
 import { GhlReply, inferImageMimeType, inferDocumentMimeType, basenameFromUrl } from './ghl-reply';
 import { GroupFetcher } from './group-fetcher';
@@ -97,18 +99,36 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
 
     const group = await this.groupFetcher.fetch(locationId, String(job.id));
 
-    // Inbound flushes resolve agentId from the group: per-channel override
-    // (`channel_agents.<channel>`) takes precedence over `default_agent`.
-    // If neither is configured for this channel, drop silently — there is
-    // no agent to forward to.
+    // The contact is fetched up-front: inbound agent resolution can be
+    // overridden by a per-contact custom field, and the AI gate + custom_fields
+    // enrichment below need it regardless.
+    const contact = await this.contactClient.get({
+      jobId: String(job.id),
+      contactId,
+      apiKey: group.apiKey,
+    });
+
+    // Inbound flushes resolve agentId with this precedence:
+    //   contact.<AGENT_FIELD_KEY> (e.g. contact.aiagent) when set
+    //     -> channel_agents.<channel>
+    //     -> default_agent
+    //     -> skip (no agent to forward to).
+    // The per-contact override lets a single contact pin a specific agent even
+    // when the location has no default configured.
     let agentId: string;
     if (source === 'inbound') {
+      const contactAgent = await this.resolveContactAgent(
+        contact,
+        locationId,
+        group.apiKey,
+        String(job.id),
+      );
       const channelAgent = resolveAgentForChannel(group.channelAgents, replyChannel);
-      const resolved = channelAgent ?? group.defaultAgent;
+      const resolved = contactAgent ?? channelAgent ?? group.defaultAgent;
       if (!resolved) {
         this.logger.log(
           { jobId: job.id, locationId, contactId, replyChannel },
-          'Inbound flush skipped — no channel_agent or default_agent configured',
+          'Inbound flush skipped — no contact agent, channel_agent or default_agent configured',
         );
         return {
           ok: true,
@@ -116,6 +136,12 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
           totalMs: Date.now() - started,
           skipped: 'no_default_agent',
         };
+      }
+      if (contactAgent) {
+        this.logger.log(
+          { jobId: job.id, locationId, contactId, agentId: contactAgent },
+          'Inbound agent_id overridden by contact custom field',
+        );
       }
       agentId = resolved;
     } else {
@@ -137,12 +163,6 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
       },
       'Flushing debounced messages',
     );
-
-    const contact = await this.contactClient.get({
-      jobId: String(job.id),
-      contactId,
-      apiKey: group.apiKey,
-    });
 
     if (group.aiFieldId) {
       const field = contact.customFields.find((f) => f.id === group.aiFieldId!.id);
@@ -338,6 +358,35 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
       ghlStatus: lastStatus,
       totalMs: Date.now() - started,
     };
+  }
+
+  /**
+   * Resolves the inbound agent override from the contact's custom field whose
+   * `fieldKey` is `AGENT_FIELD_KEY` (default `contact.aiagent`). Returns its
+   * value (the agent id) when set, else `undefined`. Best-effort: the
+   * field-definition lookup is wrapped so a failure falls back to the
+   * channel/default agent rather than failing the job. The definitions are
+   * cached per location, so this shares the fetch with the custom_fields
+   * enrichment below.
+   */
+  private async resolveContactAgent(
+    contact: GetContactResult,
+    locationId: string,
+    apiKey: string,
+    jobId: string,
+  ): Promise<string | undefined> {
+    if (contact.customFields.length === 0) return undefined;
+    const fieldKey = this.config.get('AGENT_FIELD_KEY', { infer: true });
+    try {
+      const defs = await this.contactClient.listFieldDefs({ jobId, locationId, apiKey });
+      return resolveFieldValueByKey(contact.customFields, defs.keyToId, fieldKey);
+    } catch (err) {
+      this.logger.warn(
+        { jobId, locationId, err: (err as Error).message },
+        'Contact agent override resolution failed — falling back to channel/default agent',
+      );
+      return undefined;
+    }
   }
 }
 

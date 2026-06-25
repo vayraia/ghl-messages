@@ -227,6 +227,24 @@ gate configured), so the same call serves both the AI toggle and the
 name lookup. When the contact has no `firstName`, `name` is omitted from
 `contact_data`.
 
+`agent_id` for **inbound** messages (native GHL `InboundMessage` webhook,
+which carry no `agent_id` themselves) is resolved with this precedence:
+
+1. The contact custom field whose `fieldKey` is `AGENT_FIELD_KEY`
+   (default `contact.aiagent`) — when set to a non-blank value, it is used
+   verbatim as `agent_id`, letting a single contact pin a specific agent.
+2. `general_settings.channel_agents.<channel>` — the per-channel override
+   for the message's channel.
+3. `general_settings.default_agent` — the location-wide fallback.
+
+If none resolve, the flush is dropped silently (`skipped: no_default_agent`).
+The override field id is resolved from
+`GET $GHL_API_BASE_URL/locations/{id}/customFields` (cached per location,
+shared with the `custom_fields` lookup); resolution is best-effort, so a
+failed definitions lookup falls back to the channel/default agent rather
+than failing the job. Workflow-sourced webhooks keep their explicit
+top-level / `customData.agent_id` and are not affected by this override.
+
 `contact_data.email` and `contact_data.phone` are the contact's own email
 and phone from the same `GET $GHL_API_BASE_URL/contacts/{id}`. Each is
 included only when present and non-blank — otherwise omitted from

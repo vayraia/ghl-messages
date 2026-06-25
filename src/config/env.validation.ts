@@ -46,6 +46,10 @@ export interface AppEnv {
   GHL_API_VERSION: string;
   GHL_API_TIMEOUT_MS: number;
 
+  // fieldKey of the contact custom field whose value, when set, overrides the
+  // inbound agent_id (takes precedence over channel_agents / default_agent).
+  AGENT_FIELD_KEY: string;
+
   MESSAGE_DEBOUNCE_MS: number;
   IDEMPOTENCY_TTL_SECONDS: number;
 }
@@ -110,6 +114,8 @@ export const envValidationSchema = Joi.object<AppEnv, true>({
     .default('https://services.leadconnectorhq.com'),
   GHL_API_VERSION: Joi.string().default('2021-07-28'),
   GHL_API_TIMEOUT_MS: Joi.number().integer().min(100).default(10_000),
+
+  AGENT_FIELD_KEY: Joi.string().default('contact.aiagent'),
 
   MESSAGE_DEBOUNCE_MS: Joi.number().integer().min(0).default(10_000),
   IDEMPOTENCY_TTL_SECONDS: Joi.number().integer().min(1).default(3600),

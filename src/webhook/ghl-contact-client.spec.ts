@@ -1,7 +1,11 @@
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosError } from 'axios';
 import { UnrecoverableError } from 'bullmq';
-import { GhlContactClient, buildNamedCustomFields } from './ghl-contact-client';
+import {
+  GhlContactClient,
+  buildNamedCustomFields,
+  resolveFieldValueByKey,
+} from './ghl-contact-client';
 import { AppEnv } from '../config/env.validation';
 
 jest.mock('axios');
@@ -546,6 +550,82 @@ describe('GhlContactClient', () => {
       expect(err).toBeInstanceOf(Error);
       expect(err).not.toBeInstanceOf(UnrecoverableError);
       expect(err.message).toMatch(/ETIMEDOUT/);
+    });
+  });
+
+  describe('listFieldDefs', () => {
+    it('returns both id→name and lowercased fieldKey→id maps', async () => {
+      const { client, get } = makeClient();
+      get.mockResolvedValue({
+        status: 200,
+        data: {
+          customFields: [
+            { id: 'cf_1', name: 'AI Agent', fieldKey: 'contact.AiAgent' },
+            { id: 'cf_2', name: 'Plan', fieldKey: 'contact.plan' },
+            { id: 'cf_3', name: 'No key' },
+          ],
+        },
+      });
+
+      const defs = await client.listFieldDefs({ jobId: 'j', locationId: 'loc_1', apiKey: 'k' });
+
+      expect(defs.idToName.get('cf_1')).toBe('AI Agent');
+      expect(defs.keyToId.get('contact.aiagent')).toBe('cf_1');
+      expect(defs.keyToId.get('contact.plan')).toBe('cf_2');
+      expect(defs.keyToId.has('cf_3')).toBe(false);
+    });
+
+    it('shares the per-location cache with listCustomFields', async () => {
+      const { client, get } = makeClient();
+      get.mockResolvedValue({
+        status: 200,
+        data: { customFields: [{ id: 'cf_1', name: 'Plan', fieldKey: 'contact.plan' }] },
+      });
+
+      await client.listFieldDefs({ jobId: 'j', locationId: 'loc_1', apiKey: 'k' });
+      await client.listCustomFields({ jobId: 'j', locationId: 'loc_1', apiKey: 'k' });
+
+      expect(get).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('resolveFieldValueByKey', () => {
+    const keyToId = new Map([['contact.aiagent', 'cf_ai']]);
+
+    it('returns the normalized value of the field matching the key', () => {
+      const value = resolveFieldValueByKey(
+        [{ id: 'cf_ai', value: '  agent_x  ' }],
+        keyToId,
+        'contact.aiagent',
+      );
+      expect(value).toBe('agent_x');
+    });
+
+    it('matches the key case-insensitively', () => {
+      const value = resolveFieldValueByKey(
+        [{ id: 'cf_ai', value: 'agent_x' }],
+        keyToId,
+        'Contact.AiAgent',
+      );
+      expect(value).toBe('agent_x');
+    });
+
+    it('returns undefined when the key is unknown', () => {
+      expect(
+        resolveFieldValueByKey([{ id: 'cf_ai', value: 'agent_x' }], keyToId, 'contact.other'),
+      ).toBeUndefined();
+    });
+
+    it('returns undefined when the contact has no field with that id', () => {
+      expect(
+        resolveFieldValueByKey([{ id: 'cf_other', value: 'x' }], keyToId, 'contact.aiagent'),
+      ).toBeUndefined();
+    });
+
+    it('returns undefined when the value is blank', () => {
+      expect(
+        resolveFieldValueByKey([{ id: 'cf_ai', value: '   ' }], keyToId, 'contact.aiagent'),
+      ).toBeUndefined();
     });
   });
 

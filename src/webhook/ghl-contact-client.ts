@@ -67,6 +67,18 @@ export interface ListCustomFieldsInput {
 }
 
 /**
+ * The location's custom-field definitions, indexed two ways:
+ *  - `idToName`: `id → name` (display name) — used to enrich the contact's
+ *    custom fields into `contact_data.custom_fields`.
+ *  - `keyToId`: lowercased `fieldKey → id` (e.g. `contact.aiagent → cf_x`) —
+ *    used to find a specific field on the contact by its merge-field key.
+ */
+export interface CustomFieldDefs {
+  idToName: Map<string, string>;
+  keyToId: Map<string, string>;
+}
+
+/**
  * Custom-field definitions change rarely, so we cache the `id → name` map per
  * location to keep them out of the per-message hot path. Five minutes is short
  * enough that a freshly-added field shows up quickly, long enough to spare GHL
@@ -92,10 +104,7 @@ const USER_CACHE_TTL_MS = 5 * 60_000;
 export class GhlContactClient {
   private readonly logger = new Logger(GhlContactClient.name);
   private readonly client: AxiosInstance;
-  private readonly fieldDefCache = new Map<
-    string,
-    { expiresAt: number; defs: Map<string, string> }
-  >();
+  private readonly fieldDefCache = new Map<string, { expiresAt: number; defs: CustomFieldDefs }>();
   private readonly userCache = new Map<string, { expiresAt: number; user: AssignedUser }>();
 
   constructor(config: ConfigService<AppEnv, true>) {
@@ -183,6 +192,16 @@ export class GhlContactClient {
    * job on a throw — field names are not load-bearing like the AI gate.
    */
   async listCustomFields(input: ListCustomFieldsInput): Promise<Map<string, string>> {
+    return (await this.listFieldDefs(input)).idToName;
+  }
+
+  /**
+   * Like `listCustomFields` but returns the full `CustomFieldDefs` (both the
+   * `id → name` and `fieldKey → id` views), sharing the same per-location cache.
+   * Used to resolve a contact field by its merge-field key (e.g. the agent
+   * override `contact.aiagent`).
+   */
+  async listFieldDefs(input: ListCustomFieldsInput): Promise<CustomFieldDefs> {
     const now = Date.now();
     const cached = this.fieldDefCache.get(input.locationId);
     if (cached && cached.expiresAt > now) {
@@ -221,7 +240,7 @@ export class GhlContactClient {
           locationId: input.locationId,
           status,
           durationMs,
-          fieldCount: defs.size,
+          fieldCount: defs.idToName.size,
         },
         'GHL custom fields read',
       );
@@ -393,10 +412,7 @@ function extractFirstName(data: unknown): string | undefined {
  * GET response. Tolerates both the top-level and nested `contact.<key>` shapes,
  * and returns `undefined` on any missing or blank value.
  */
-function extractContactString(
-  data: unknown,
-  key: 'email' | 'phone',
-): string | undefined {
+function extractContactString(data: unknown, key: 'email' | 'phone'): string | undefined {
   if (!data || typeof data !== 'object') return undefined;
   const root = data as Record<string, unknown> & { contact?: Record<string, unknown> };
   const raw =
@@ -500,26 +516,51 @@ function extractCustomFields(data: unknown): ContactCustomField[] {
 }
 
 /**
- * Extracts the `id → name` map from a GHL `GET /locations/:id/customFields`
- * response. Skips entries without a string id or a non-blank name, and returns
- * an empty map on any unexpected structure.
+ * Extracts the custom-field definitions from a GHL `GET
+ * /locations/:id/customFields` response into both an `id → name` map and a
+ * lowercased `fieldKey → id` map. Entries without a string id are skipped; a
+ * blank name omits only the `idToName` entry, a blank fieldKey only the
+ * `keyToId` entry. Returns empty maps on any unexpected structure.
  */
-function extractCustomFieldDefs(data: unknown): Map<string, string> {
-  const out = new Map<string, string>();
-  if (!data || typeof data !== 'object') return out;
+function extractCustomFieldDefs(data: unknown): CustomFieldDefs {
+  const idToName = new Map<string, string>();
+  const keyToId = new Map<string, string>();
+  if (!data || typeof data !== 'object') return { idToName, keyToId };
   const root = data as { customFields?: unknown };
   const raw = Array.isArray(root.customFields) ? root.customFields : null;
-  if (!raw) return out;
+  if (!raw) return { idToName, keyToId };
   for (const entry of raw) {
     if (!entry || typeof entry !== 'object') continue;
-    const e = entry as { id?: unknown; name?: unknown };
+    const e = entry as { id?: unknown; name?: unknown; fieldKey?: unknown };
     if (typeof e.id !== 'string' || e.id.length === 0) continue;
-    if (typeof e.name !== 'string') continue;
-    const name = e.name.trim();
-    if (name.length === 0) continue;
-    out.set(e.id, name);
+    if (typeof e.name === 'string') {
+      const name = e.name.trim();
+      if (name.length > 0) idToName.set(e.id, name);
+    }
+    if (typeof e.fieldKey === 'string') {
+      const key = e.fieldKey.trim().toLowerCase();
+      if (key.length > 0) keyToId.set(key, e.id);
+    }
   }
-  return out;
+  return { idToName, keyToId };
+}
+
+/**
+ * Finds the value of the contact custom field whose `fieldKey` matches
+ * `fieldKey` (case-insensitive), resolved through the location's `keyToId`
+ * definitions. Returns the normalized string value, or `undefined` when the
+ * key is unknown, the contact has no such field, or its value is blank.
+ */
+export function resolveFieldValueByKey(
+  fields: ContactCustomField[],
+  keyToId: Map<string, string>,
+  fieldKey: string,
+): string | undefined {
+  const id = keyToId.get(fieldKey.trim().toLowerCase());
+  if (!id) return undefined;
+  const field = fields.find((f) => f.id === id);
+  if (!field) return undefined;
+  return normalizeFieldValue(field.value);
 }
 
 /**

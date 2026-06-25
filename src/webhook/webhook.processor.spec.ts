@@ -22,11 +22,20 @@ function makeProcessor() {
   const contactClient = {
     get: jest.fn().mockResolvedValue({ status: 200, customFields: [], firstName: undefined }),
     listCustomFields: jest.fn().mockResolvedValue(new Map<string, string>()),
+    listFieldDefs: jest.fn().mockResolvedValue({
+      idToName: new Map<string, string>(),
+      keyToId: new Map<string, string>(),
+    }),
     getUser: jest.fn(),
     disableAiField: jest.fn(),
   } as unknown as GhlContactClient;
   const config = {
-    get: (key: string) => (key === 'WEBHOOK_WORKER_CONCURRENCY' ? 5 : undefined),
+    get: (key: string) =>
+      key === 'WEBHOOK_WORKER_CONCURRENCY'
+        ? 5
+        : key === 'AGENT_FIELD_KEY'
+          ? 'contact.aiagent'
+          : undefined,
   } as unknown as ConfigService<AppEnv, true>;
 
   const processor = new WebhookProcessor(
@@ -679,6 +688,105 @@ describe('WebhookProcessor.process', () => {
       expect(p.ghl.send).not.toHaveBeenCalled();
       expect(p.insistence.schedule).not.toHaveBeenCalled();
       expect(result).toMatchObject({ ok: true, drained: 1, skipped: 'no_default_agent' });
+    });
+
+    describe('contact aiagent override', () => {
+      function withAiAgent(p: ReturnType<typeof makeProcessor>, value: unknown): void {
+        (p.contactClient.get as jest.Mock).mockResolvedValue({
+          status: 200,
+          customFields: [{ id: 'cf_ai', value }],
+        });
+        (p.contactClient.listFieldDefs as jest.Mock).mockResolvedValue({
+          idToName: new Map<string, string>(),
+          keyToId: new Map<string, string>([['contact.aiagent', 'cf_ai']]),
+        });
+      }
+
+      function withReply(p: ReturnType<typeof makeProcessor>): void {
+        (p.forwarder.forward as jest.Mock).mockResolvedValue({
+          messages: [{ type: 'text', content: 'reply' }],
+          durationMs: 1,
+        });
+        (p.ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 1 });
+        (p.insistence.schedule as jest.Mock).mockResolvedValue(undefined);
+      }
+
+      it('prefers the contact aiagent field over channel_agents and default_agent', async () => {
+        const p = makeProcessor();
+        (p.debouncer.drain as jest.Mock).mockResolvedValue(inboundItems);
+        (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({
+          apiKey: 'pit-k',
+          defaultAgent: 'agent_default',
+          channelAgents: { whatsapp: 'agent_wpp' },
+          insistences: [{ hours: 1 }],
+        });
+        withAiAgent(p, 'agent_from_contact');
+        withReply(p);
+
+        await p.processor.process(inboundJob());
+
+        expect(p.forwarder.forward).toHaveBeenCalledWith(
+          expect.objectContaining({ agentId: 'agent_from_contact' }),
+        );
+        expect(p.insistence.schedule).toHaveBeenCalledWith(
+          expect.objectContaining({ agentId: 'agent_from_contact' }),
+        );
+      });
+
+      it('forwards using the contact aiagent even with no channel_agent or default_agent', async () => {
+        const p = makeProcessor();
+        (p.debouncer.drain as jest.Mock).mockResolvedValue(inboundItems);
+        (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({ apiKey: 'pit-k' });
+        withAiAgent(p, 'agent_from_contact');
+        withReply(p);
+
+        const result = await p.processor.process(inboundJob());
+
+        expect(p.forwarder.forward).toHaveBeenCalledWith(
+          expect.objectContaining({ agentId: 'agent_from_contact' }),
+        );
+        expect(result).toMatchObject({ ok: true, drained: 1, ghlStatus: 200 });
+      });
+
+      it('falls back to default_agent when the aiagent value is blank', async () => {
+        const p = makeProcessor();
+        (p.debouncer.drain as jest.Mock).mockResolvedValue(inboundItems);
+        (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({
+          apiKey: 'pit-k',
+          defaultAgent: 'agent_default',
+          insistences: [{ hours: 1 }],
+        });
+        withAiAgent(p, '   ');
+        withReply(p);
+
+        await p.processor.process(inboundJob());
+
+        expect(p.forwarder.forward).toHaveBeenCalledWith(
+          expect.objectContaining({ agentId: 'agent_default' }),
+        );
+      });
+
+      it('falls back to default_agent when the field-definition lookup throws', async () => {
+        const p = makeProcessor();
+        (p.debouncer.drain as jest.Mock).mockResolvedValue(inboundItems);
+        (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({
+          apiKey: 'pit-k',
+          defaultAgent: 'agent_default',
+          insistences: [{ hours: 1 }],
+        });
+        (p.contactClient.get as jest.Mock).mockResolvedValue({
+          status: 200,
+          customFields: [{ id: 'cf_ai', value: 'agent_from_contact' }],
+        });
+        (p.contactClient.listFieldDefs as jest.Mock).mockRejectedValue(new Error('boom'));
+        withReply(p);
+
+        await p.processor.process(inboundJob());
+
+        expect(p.forwarder.forward).toHaveBeenCalledWith(
+          expect.objectContaining({ agentId: 'agent_default' }),
+        );
+      });
     });
   });
 
