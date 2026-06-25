@@ -10,7 +10,7 @@ import { AppEnv } from '../config/env.validation';
  * wires them in here.
  *
  * `synchronize` is always off: the schema is owned by explicit migrations
- * (`yarn migration:run`), never by entity auto-sync.
+ * (`npm run migration:run`), never by entity auto-sync.
  */
 @Module({
   imports: [

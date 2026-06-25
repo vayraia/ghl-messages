@@ -159,12 +159,12 @@ export DATABASE_URL=postgres://user:pass@host:5432/db
 export META_TOKEN_ENC_KEY=$(openssl rand -base64 32)
 
 # 2. Create the schema
-yarn migration:run
+npm run migration:run
 
 # 3. Register a tenant (see POST /v1/meta-channels above)
 
 # 4. Run the API and the worker WITH the flag on (the worker hosts the queue
-#    processor): yarn start:prod  /  yarn start:worker
+#    processor): npm run start:prod  /  npm run start:worker
 ```
 
 ## Pipeline overview

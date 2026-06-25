@@ -4,7 +4,7 @@ import { DataSource } from 'typeorm';
 /**
  * Standalone DataSource used ONLY by the TypeORM CLI (migrations). The running
  * app builds its own connection in `DatabaseModule` from `ConfigService`; this
- * file exists so `yarn migration:run` / `migration:generate` work outside Nest.
+ * file exists so `npm run migration:run` / `migration:generate` work outside Nest.
  *
  * Env is loaded from `.env` via `dotenv/config`.
  */

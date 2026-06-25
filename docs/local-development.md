@@ -3,13 +3,13 @@
 ## Prerequisites
 
 - Node.js ≥ 20
-- Yarn 1.x (the project pins `packageManager: yarn@1.22.x` for stability)
+- npm 10.x (bundled with Node)
 - Docker (optional; used for the bundled Redis)
 
 ## First-time setup
 
 ```bash
-yarn install
+npm install
 ```
 
 Create a `.env` at the repo root. Copy the template below — these are the
@@ -74,14 +74,14 @@ docker compose up -d redis
 In one terminal, run the API:
 
 ```bash
-yarn start:dev
+npm run start:dev
 ```
 
 In another, run the worker (optional in dev — the API hosts the
 processor by default):
 
 ```bash
-yarn build && node dist/worker.js
+npm run build && node dist/worker.js
 ```
 
 Smoke test the webhook:
@@ -107,9 +107,9 @@ the worker logs:
 ## Tests
 
 ```bash
-yarn test            # unit tests (jest)
-yarn test:cov        # with coverage
-yarn test:e2e        # end-to-end against an in-memory Nest app
+npm test             # unit tests (jest)
+npm run test:cov     # with coverage
+npm run test:e2e     # end-to-end against an in-memory Nest app
 ```
 
 The e2e test mocks the BullMQ queue **and** the dedicated Redis client
@@ -120,8 +120,8 @@ are fully isolated.
 
 | Command            | What it does                                |
 | ------------------ | ------------------------------------------- |
-| `yarn lint`        | ESLint + Prettier autofix                   |
-| `yarn format`      | Prettier-only autoformat                    |
-| `yarn build`       | Compile to `dist/`                          |
-| `yarn start:prod`  | Run the compiled API                        |
-| `yarn start:worker`| Run the compiled worker                     |
+| `npm run lint`        | ESLint + Prettier autofix                |
+| `npm run format`      | Prettier-only autoformat                 |
+| `npm run build`       | Compile to `dist/`                       |
+| `npm run start:prod`  | Run the compiled API                     |
+| `npm run start:worker`| Run the compiled worker                  |

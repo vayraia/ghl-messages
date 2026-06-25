@@ -1,6 +1,6 @@
 # go-high-level
 
-Highly scalable webhook ingestion service built with NestJS and yarn.
+Highly scalable webhook ingestion service built with NestJS and npm.
 
 The `POST /v1/webhook` endpoint authenticates the caller via the
 `x-webhook-secret` header, enqueues the event onto a Redis-backed BullMQ
@@ -11,10 +11,10 @@ delivery semantics.
 ## Quickstart
 
 ```bash
-yarn install
+npm install
 docker compose up -d redis
 cp -n .env.local .env  # then edit WEBHOOK_SECRET (see docs/local-development.md)
-yarn start:dev
+npm run start:dev
 ```
 
 ```bash
@@ -27,9 +27,9 @@ curl -i -X POST http://localhost:3000/v1/webhook \
 ## Tests
 
 ```bash
-yarn test       # unit
-yarn test:e2e   # end-to-end (queue mocked, no Redis required)
-yarn test:cov   # coverage
+npm test            # unit
+npm run test:e2e    # end-to-end (queue mocked, no Redis required)
+npm run test:cov    # coverage
 ```
 
 ## Documentation

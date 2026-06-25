@@ -3,20 +3,19 @@
 FROM node:22-alpine AS deps
 WORKDIR /app
 # 1. Copiamos solo lo necesario para resolver dependencias
-COPY package.json yarn.lock ./
-RUN yarn install --frozen-lockfile --network-timeout 600000
+COPY package.json package-lock.json ./
+RUN npm ci
 
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 # 2. Copiamos SOLO los archivos de configuración y el código fuente (quirúrgico)
-COPY package.json yarn.lock tsconfig.json tsconfig.build.json nest-cli.json ./
+COPY package.json package-lock.json tsconfig.json tsconfig.build.json nest-cli.json ./
 COPY src ./src
 
-# 3. La magia: Compilamos y en el mismo paso le decimos a Yarn que limpie
-# los node_modules dejando ÚNICAMENTE las dependencias de producción.
-# --prefer-offline evita que Yarn intente descargar cosas de nuevo.
-RUN yarn build && yarn install --production --ignore-scripts --prefer-offline
+# 3. La magia: compilamos y en el mismo paso podamos los node_modules dejando
+# ÚNICAMENTE las dependencias de producción (sin reinstalar nada).
+RUN npm run build && npm prune --omit=dev
 
 FROM node:22-alpine AS runtime
 WORKDIR /app
