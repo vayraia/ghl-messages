@@ -14,7 +14,10 @@ interface RedisMock {
 function makeController() {
   const groupFetcher = { fetch: jest.fn() } as unknown as jest.Mocked<GroupFetcher>;
   const updater = {
-    disableAiField: jest.fn(),
+    updateContactFields: jest.fn(),
+    // Default: no field definitions resolved → no aiagent to clear. Individual
+    // tests override this to exercise the agent-override clearing.
+    listFieldDefs: jest.fn().mockResolvedValue({ idToName: new Map(), keyToId: new Map() }),
     get: jest.fn(),
   } as unknown as jest.Mocked<GhlContactClient>;
   const insistenceClient = {
@@ -23,7 +26,10 @@ function makeController() {
   } as unknown as jest.Mocked<InsistenceClient>;
   const redis: RedisMock = { set: jest.fn().mockResolvedValue('OK') };
 
-  const env: Record<string, number> = { IDEMPOTENCY_TTL_SECONDS: 3600 };
+  const env: Record<string, number | string> = {
+    IDEMPOTENCY_TTL_SECONDS: 3600,
+    AGENT_FIELD_KEY: 'contact.aiagent',
+  };
   const config = {
     get: (k: keyof AppEnv) => env[k as string],
   } as unknown as ConfigService<AppEnv, true>;
@@ -117,7 +123,7 @@ describe('WebhookOutboundController', () => {
       apiKey: 'sk',
       aiFieldId: { id: 'cf', key: 'ai' },
     } satisfies GroupSettings);
-    updater.disableAiField.mockResolvedValue({ status: 200, durationMs: 5 });
+    updater.updateContactFields.mockResolvedValue({ status: 200, durationMs: 5 });
 
     const r = await controller.outbound(payload({ messageId: undefined }));
 
@@ -125,34 +131,107 @@ describe('WebhookOutboundController', () => {
     expect(r).toEqual({ ok: true, updated: true });
   });
 
-  it('returns skipped=no_ai_field_id when group has no aiFieldId', async () => {
+  it('returns skipped=nothing_to_update when no aiFieldId and no aiagent field', async () => {
     const { controller, groupFetcher, updater } = makeController();
     groupFetcher.fetch.mockResolvedValue({ apiKey: 'sk' } satisfies GroupSettings);
 
     const r = await controller.outbound(payload());
 
-    expect(r).toEqual({ ok: true, skipped: 'no_ai_field_id' });
-    expect(updater.disableAiField).not.toHaveBeenCalled();
+    expect(r).toEqual({ ok: true, skipped: 'nothing_to_update' });
+    expect(updater.updateContactFields).not.toHaveBeenCalled();
   });
 
-  it('disables AI field with the group apiKey when ai_field_id is configured', async () => {
+  it('disables the AI field with the group apiKey when ai_field_id is configured', async () => {
     const { controller, groupFetcher, updater } = makeController();
     groupFetcher.fetch.mockResolvedValue({
       apiKey: 'sk_xxx',
       aiFieldId: { id: 'cf_1', key: 'ai_status' },
     } satisfies GroupSettings);
-    updater.disableAiField.mockResolvedValue({ status: 200, durationMs: 7 });
+    updater.updateContactFields.mockResolvedValue({ status: 200, durationMs: 7 });
 
     const r = await controller.outbound(payload());
 
     expect(groupFetcher.fetch).toHaveBeenCalledWith('loc_1', 'm_1');
-    expect(updater.disableAiField).toHaveBeenCalledWith({
+    expect(updater.updateContactFields).toHaveBeenCalledWith({
       jobId: 'm_1',
       contactId: 'c_1',
       apiKey: 'sk_xxx',
-      aiField: { id: 'cf_1', key: 'ai_status' },
+      fields: [{ id: 'cf_1', key: 'ai_status', value: 'Disabled' }],
     });
     expect(r).toEqual({ ok: true, updated: true });
+  });
+
+  describe('aiagent override clearing', () => {
+    it('clears aiagent alongside the AI disable in a single update', async () => {
+      const { controller, groupFetcher, updater } = makeController();
+      groupFetcher.fetch.mockResolvedValue({
+        apiKey: 'sk_xxx',
+        aiFieldId: { id: 'cf_1', key: 'ai_status' },
+      } satisfies GroupSettings);
+      updater.listFieldDefs.mockResolvedValue({
+        idToName: new Map(),
+        keyToId: new Map([['contact.aiagent', 'cf_agent']]),
+      });
+      updater.updateContactFields.mockResolvedValue({ status: 200, durationMs: 7 });
+
+      const r = await controller.outbound(payload());
+
+      expect(updater.listFieldDefs).toHaveBeenCalledWith({
+        jobId: 'm_1',
+        locationId: 'loc_1',
+        apiKey: 'sk_xxx',
+      });
+      expect(updater.updateContactFields).toHaveBeenCalledWith({
+        jobId: 'm_1',
+        contactId: 'c_1',
+        apiKey: 'sk_xxx',
+        fields: [
+          { id: 'cf_1', key: 'ai_status', value: 'Disabled' },
+          { id: 'cf_agent', key: 'contact.aiagent', value: '' },
+        ],
+      });
+      expect(r).toEqual({ ok: true, updated: true });
+    });
+
+    it('clears aiagent even when the group has no aiFieldId', async () => {
+      const { controller, groupFetcher, updater } = makeController();
+      groupFetcher.fetch.mockResolvedValue({ apiKey: 'sk' } satisfies GroupSettings);
+      updater.listFieldDefs.mockResolvedValue({
+        idToName: new Map(),
+        keyToId: new Map([['contact.aiagent', 'cf_agent']]),
+      });
+      updater.updateContactFields.mockResolvedValue({ status: 200, durationMs: 4 });
+
+      const r = await controller.outbound(payload());
+
+      expect(updater.updateContactFields).toHaveBeenCalledWith({
+        jobId: 'm_1',
+        contactId: 'c_1',
+        apiKey: 'sk',
+        fields: [{ id: 'cf_agent', key: 'contact.aiagent', value: '' }],
+      });
+      expect(r).toEqual({ ok: true, updated: true });
+    });
+
+    it('still disables the AI field when aiagent def resolution fails', async () => {
+      const { controller, groupFetcher, updater } = makeController();
+      groupFetcher.fetch.mockResolvedValue({
+        apiKey: 'sk',
+        aiFieldId: { id: 'cf_1', key: 'ai_status' },
+      } satisfies GroupSettings);
+      updater.listFieldDefs.mockRejectedValue(new Error('defs 503'));
+      updater.updateContactFields.mockResolvedValue({ status: 200, durationMs: 4 });
+
+      const r = await controller.outbound(payload());
+
+      expect(updater.updateContactFields).toHaveBeenCalledWith({
+        jobId: 'm_1',
+        contactId: 'c_1',
+        apiKey: 'sk',
+        fields: [{ id: 'cf_1', key: 'ai_status', value: 'Disabled' }],
+      });
+      expect(r).toEqual({ ok: true, updated: true });
+    });
   });
 
   it('swallows UnrecoverableError from groupFetcher and returns 200', async () => {
@@ -163,16 +242,16 @@ describe('WebhookOutboundController', () => {
 
     expect(r).toEqual({ ok: true });
     expect(insistenceClient.cancel).not.toHaveBeenCalled();
-    expect(updater.disableAiField).not.toHaveBeenCalled();
+    expect(updater.updateContactFields).not.toHaveBeenCalled();
   });
 
-  it('swallows UnrecoverableError from contactUpdater and returns 200', async () => {
+  it('swallows UnrecoverableError from the contact update and returns 200', async () => {
     const { controller, groupFetcher, updater } = makeController();
     groupFetcher.fetch.mockResolvedValue({
       apiKey: 'sk',
       aiFieldId: { id: 'cf', key: 'ai' },
     } satisfies GroupSettings);
-    updater.disableAiField.mockRejectedValue(new UnrecoverableError('400 bad'));
+    updater.updateContactFields.mockRejectedValue(new UnrecoverableError('400 bad'));
 
     const r = await controller.outbound(payload());
 
@@ -193,7 +272,7 @@ describe('WebhookOutboundController', () => {
         apiKey: 'sk',
         aiFieldId: { id: 'cf', key: 'ai' },
       } satisfies GroupSettings);
-      updater.disableAiField.mockResolvedValue({ status: 200, durationMs: 1 });
+      updater.updateContactFields.mockResolvedValue({ status: 200, durationMs: 1 });
 
       await controller.outbound(payload());
 
@@ -206,22 +285,22 @@ describe('WebhookOutboundController', () => {
       expect(fetchOrder).toBeLessThan(cancelOrder);
     });
 
-    it('continues with disable-AI when cancel rejects unexpectedly', async () => {
+    it('continues with the contact update when cancel rejects unexpectedly', async () => {
       const { controller, groupFetcher, updater, insistenceClient } = makeController();
       (insistenceClient.cancel as jest.Mock).mockRejectedValue(new Error('boom'));
       groupFetcher.fetch.mockResolvedValue({
         apiKey: 'sk',
         aiFieldId: { id: 'cf', key: 'ai' },
       } satisfies GroupSettings);
-      updater.disableAiField.mockResolvedValue({ status: 200, durationMs: 1 });
+      updater.updateContactFields.mockResolvedValue({ status: 200, durationMs: 1 });
 
       const r = await controller.outbound(payload());
 
       expect(r).toEqual({ ok: true, updated: true });
-      expect(updater.disableAiField).toHaveBeenCalled();
+      expect(updater.updateContactFields).toHaveBeenCalled();
     });
 
-    it('still cancels even when the group has no aiFieldId', async () => {
+    it('still cancels even when there is nothing to update', async () => {
       const { controller, groupFetcher, insistenceClient } = makeController();
       groupFetcher.fetch.mockResolvedValue({ apiKey: 'sk' } satisfies GroupSettings);
 
@@ -231,7 +310,7 @@ describe('WebhookOutboundController', () => {
         jobId: 'm_1',
         contactId: 'c_1',
       });
-      expect(r).toEqual({ ok: true, skipped: 'no_ai_field_id' });
+      expect(r).toEqual({ ok: true, skipped: 'nothing_to_update' });
     });
 
     it('uses messageId as jobId when present, otherwise contactId:locationId', async () => {
@@ -248,7 +327,7 @@ describe('WebhookOutboundController', () => {
   });
 
   describe('non_blocking_users', () => {
-    it('skips cancel + disable when userId matches a non_blocking_users entry', async () => {
+    it('skips cancel + update when userId matches a non_blocking_users entry', async () => {
       const { controller, groupFetcher, updater, insistenceClient } = makeController();
       groupFetcher.fetch.mockResolvedValue({
         apiKey: 'sk',
@@ -263,23 +342,23 @@ describe('WebhookOutboundController', () => {
 
       expect(r).toEqual({ ok: true, skipped: 'non_blocking_user' });
       expect(insistenceClient.cancel).not.toHaveBeenCalled();
-      expect(updater.disableAiField).not.toHaveBeenCalled();
+      expect(updater.updateContactFields).not.toHaveBeenCalled();
     });
 
-    it('proceeds with cancel + disable when userId is not in non_blocking_users', async () => {
+    it('proceeds with cancel + update when userId is not in non_blocking_users', async () => {
       const { controller, groupFetcher, updater, insistenceClient } = makeController();
       groupFetcher.fetch.mockResolvedValue({
         apiKey: 'sk',
         aiFieldId: { id: 'cf', key: 'ai' },
         nonBlockingUsers: [{ id: 'u_admin', name: 'Admin' }],
       } satisfies GroupSettings);
-      updater.disableAiField.mockResolvedValue({ status: 200, durationMs: 1 });
+      updater.updateContactFields.mockResolvedValue({ status: 200, durationMs: 1 });
 
       const r = await controller.outbound(payload({ userId: 'u_human' }));
 
       expect(r).toEqual({ ok: true, updated: true });
       expect(insistenceClient.cancel).toHaveBeenCalled();
-      expect(updater.disableAiField).toHaveBeenCalled();
+      expect(updater.updateContactFields).toHaveBeenCalled();
     });
 
     it('proceeds normally when nonBlockingUsers is undefined', async () => {
@@ -288,13 +367,13 @@ describe('WebhookOutboundController', () => {
         apiKey: 'sk',
         aiFieldId: { id: 'cf', key: 'ai' },
       } satisfies GroupSettings);
-      updater.disableAiField.mockResolvedValue({ status: 200, durationMs: 1 });
+      updater.updateContactFields.mockResolvedValue({ status: 200, durationMs: 1 });
 
       const r = await controller.outbound(payload());
 
       expect(r).toEqual({ ok: true, updated: true });
       expect(insistenceClient.cancel).toHaveBeenCalled();
-      expect(updater.disableAiField).toHaveBeenCalled();
+      expect(updater.updateContactFields).toHaveBeenCalled();
     });
   });
 });

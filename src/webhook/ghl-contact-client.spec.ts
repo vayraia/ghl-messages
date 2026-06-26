@@ -244,21 +244,29 @@ describe('GhlContactClient', () => {
     });
   });
 
-  describe('disableAiField', () => {
-    it('PUTs /contacts/:id with bearer auth and customFields body', async () => {
+  describe('updateContactFields', () => {
+    it('PUTs /contacts/:id with bearer auth and the mapped customFields body', async () => {
       const { client, put } = makeClient();
       put.mockResolvedValue({ status: 200, data: { ok: true } });
 
-      const result = await client.disableAiField({
+      const result = await client.updateContactFields({
         jobId: 'job-1',
         contactId: 'c_1',
         apiKey: 'sk_xxx',
-        aiField: { id: 'cf_1', key: 'ai_status' },
+        fields: [
+          { id: 'cf_1', key: 'ai_status', value: 'Disabled' },
+          { id: 'cf_2', key: 'contact.aiagent', value: '' },
+        ],
       });
 
       expect(put).toHaveBeenCalledWith(
         '/contacts/c_1',
-        { customFields: [{ id: 'cf_1', key: 'ai_status', field_value: 'Disabled' }] },
+        {
+          customFields: [
+            { id: 'cf_1', key: 'ai_status', field_value: 'Disabled' },
+            { id: 'cf_2', key: 'contact.aiagent', field_value: '' },
+          ],
+        },
         { headers: { Authorization: 'Bearer sk_xxx' } },
       );
       expect(result.status).toBe(200);
@@ -269,11 +277,11 @@ describe('GhlContactClient', () => {
       put.mockResolvedValue({ status: 400, data: { error: 'bad' } });
 
       await expect(
-        client.disableAiField({
+        client.updateContactFields({
           jobId: 'job-1',
           contactId: 'c',
           apiKey: 'k',
-          aiField: { id: 'i', key: 'k' },
+          fields: [{ id: 'i', key: 'k', value: 'Disabled' }],
         }),
       ).rejects.toBeInstanceOf(UnrecoverableError);
     });
@@ -283,11 +291,11 @@ describe('GhlContactClient', () => {
       put.mockResolvedValue({ status: 503, data: 'down' });
 
       const err = await client
-        .disableAiField({
+        .updateContactFields({
           jobId: 'job-1',
           contactId: 'c',
           apiKey: 'k',
-          aiField: { id: 'i', key: 'k' },
+          fields: [{ id: 'i', key: 'k', value: 'Disabled' }],
         })
         .catch((e) => e);
 
@@ -303,11 +311,11 @@ describe('GhlContactClient', () => {
       put.mockRejectedValue(transport);
 
       const err = await client
-        .disableAiField({
+        .updateContactFields({
           jobId: 'job-1',
           contactId: 'c',
           apiKey: 'k',
-          aiField: { id: 'i', key: 'k' },
+          fields: [{ id: 'i', key: 'k', value: 'Disabled' }],
         })
         .catch((e) => e);
 

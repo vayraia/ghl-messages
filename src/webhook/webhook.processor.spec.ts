@@ -27,7 +27,7 @@ function makeProcessor() {
       keyToId: new Map<string, string>(),
     }),
     getUser: jest.fn(),
-    disableAiField: jest.fn(),
+    updateContactFields: jest.fn(),
   } as unknown as GhlContactClient;
   const config = {
     get: (key: string) =>

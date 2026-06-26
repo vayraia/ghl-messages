@@ -4,19 +4,25 @@ import axios, { AxiosError, AxiosInstance } from 'axios';
 import { UnrecoverableError } from 'bullmq';
 import { AppEnv } from '../config/env.validation';
 
-export interface AiFieldRef {
+/**
+ * A single custom-field write for `updateContactFields`: the field `id`/`key`
+ * (both sent so GHL can match either way) and the `field_value` to set. An
+ * empty `value` clears the field.
+ */
+export interface ContactFieldUpdate {
   id: string;
   key: string;
+  value: string;
 }
 
-export interface DisableAiFieldInput {
+export interface UpdateContactFieldsInput {
   jobId: string;
   contactId: string;
   apiKey: string;
-  aiField: AiFieldRef;
+  fields: ContactFieldUpdate[];
 }
 
-export interface DisableAiFieldResult {
+export interface UpdateContactFieldsResult {
   status: number;
   durationMs: number;
 }
@@ -331,15 +337,19 @@ export class GhlContactClient {
     throw new Error(`GHL user read returned ${status}: ${summary}`);
   }
 
-  async disableAiField(input: DisableAiFieldInput): Promise<DisableAiFieldResult> {
+  /**
+   * Writes one or more custom fields on a contact in a single PUT. Used by the
+   * outbound (human-takeover) flow to disable the AI gate and clear the
+   * per-contact agent override (`aiagent`) at once. Same retry-split convention
+   * as the reads: 2xx success, 4xx `UnrecoverableError`, 5xx/network retryable.
+   */
+  async updateContactFields(input: UpdateContactFieldsInput): Promise<UpdateContactFieldsResult> {
     const body = {
-      customFields: [
-        {
-          id: input.aiField.id,
-          key: input.aiField.key,
-          field_value: 'Disabled',
-        },
-      ],
+      customFields: input.fields.map((f) => ({
+        id: f.id,
+        key: f.key,
+        field_value: f.value,
+      })),
     };
 
     const path = `/contacts/${encodeURIComponent(input.contactId)}`;

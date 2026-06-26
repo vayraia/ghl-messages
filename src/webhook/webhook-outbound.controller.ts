@@ -4,7 +4,7 @@ import { UnrecoverableError } from 'bullmq';
 import { Redis } from 'ioredis';
 import { AppEnv } from '../config/env.validation';
 import { OutboundWebhookPayloadDto } from './dto/outbound-webhook-payload.dto';
-import { GhlContactClient } from './ghl-contact-client';
+import { ContactFieldUpdate, GhlContactClient } from './ghl-contact-client';
 import { GroupFetcher } from './group-fetcher';
 import { InsistenceClient } from './insistence-client';
 import { WEBHOOK_REDIS_CLIENT } from './webhook.tokens';
@@ -13,13 +13,14 @@ interface OutboundResponse {
   ok: true;
   updated?: boolean;
   deduplicated?: boolean;
-  skipped?: 'no_ai_field_id' | 'non_blocking_user';
+  skipped?: 'nothing_to_update' | 'non_blocking_user';
 }
 
 @Controller({ path: 'webhook', version: ['1'] })
 export class WebhookOutboundController {
   private readonly logger = new Logger(WebhookOutboundController.name);
   private readonly idempotencyTtlSeconds: number;
+  private readonly agentFieldKey: string;
 
   constructor(
     private readonly groupFetcher: GroupFetcher,
@@ -29,6 +30,7 @@ export class WebhookOutboundController {
     config: ConfigService<AppEnv, true>,
   ) {
     this.idempotencyTtlSeconds = config.get('IDEMPOTENCY_TTL_SECONDS', { infer: true });
+    this.agentFieldKey = config.get('AGENT_FIELD_KEY', { infer: true });
   }
 
   @Post('outbound')
@@ -111,31 +113,82 @@ export class WebhookOutboundController {
       );
     }
 
-    if (!group.aiFieldId) {
+    // Human took over → build the contact custom-field writes for a single PUT:
+    //   1. disable the AI gate (aiFieldId → "Disabled"), when configured.
+    //   2. clear the per-contact agent override (aiagent → ""), so the next
+    //      inbound message falls back to the channel/default agent.
+    const fields: ContactFieldUpdate[] = [];
+
+    if (group.aiFieldId) {
+      fields.push({ id: group.aiFieldId.id, key: group.aiFieldId.key, value: 'Disabled' });
+    } else {
       this.logger.debug(
         { jobId, locationId, contactId },
-        'Group has no ai_field_id configured — skipping',
+        'Group has no ai_field_id configured — skipping AI disable',
       );
-      return { ok: true, skipped: 'no_ai_field_id' };
+    }
+
+    const agentClear = await this.buildAgentClearField(jobId, locationId, group.apiKey);
+    if (agentClear) fields.push(agentClear);
+
+    if (fields.length === 0) {
+      this.logger.debug(
+        { jobId, locationId, contactId },
+        'Nothing to update — no ai_field_id and no aiagent field resolved',
+      );
+      return { ok: true, skipped: 'nothing_to_update' };
     }
 
     try {
-      await this.contactClient.disableAiField({
+      await this.contactClient.updateContactFields({
         jobId,
         contactId,
         apiKey: group.apiKey,
-        aiField: group.aiFieldId,
+        fields,
       });
       return { ok: true, updated: true };
     } catch (err) {
       if (err instanceof UnrecoverableError) {
         this.logger.warn(
           { jobId, contactId, err: err.message },
-          'Outbound disable-AI failed permanently — swallowed',
+          'Outbound contact update failed permanently — swallowed',
         );
         return { ok: true };
       }
       throw err;
+    }
+  }
+
+  /**
+   * Resolves the `aiagent` (AGENT_FIELD_KEY) field for this location and returns
+   * a write that clears it (empty value). The PUT is unconditional — a clear
+   * over an already-empty field is idempotent, so we don't GET the contact to
+   * check first. Best-effort: if the field definitions can't be fetched or the
+   * key isn't defined for this location, returns `undefined` (nothing to clear).
+   * The defs are cached per location, shared with the inbound enrichment.
+   */
+  private async buildAgentClearField(
+    jobId: string,
+    locationId: string,
+    apiKey: string,
+  ): Promise<ContactFieldUpdate | undefined> {
+    try {
+      const defs = await this.contactClient.listFieldDefs({ jobId, locationId, apiKey });
+      const id = defs.keyToId.get(this.agentFieldKey.trim().toLowerCase());
+      if (!id) {
+        this.logger.debug(
+          { jobId, locationId, agentFieldKey: this.agentFieldKey },
+          'aiagent field not defined for location — skipping clear',
+        );
+        return undefined;
+      }
+      return { id, key: this.agentFieldKey, value: '' };
+    } catch (err) {
+      this.logger.warn(
+        { jobId, locationId, err: (err as Error).message },
+        'aiagent field def resolution failed — skipping clear',
+      );
+      return undefined;
     }
   }
 }

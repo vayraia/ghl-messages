@@ -386,6 +386,77 @@ retried by BullMQ. Because both downstream calls live inside one job, a
 GHL retry will re-call `/chat` as well. If you observe high duplicate
 load on `/chat`, return idempotent replies based on `x-webhook-job-id`.
 
+## `POST /v1/webhook/outbound`
+
+Handles the native GHL **OutboundMessage** webhook to detect a **human
+takeover** — a GHL user (not the bot) replying to the contact — and stop
+the AI from continuing the conversation.
+
+The controller only acts when **all** of these hold; every other shape is
+silently acknowledged with `200 { "ok": true }`:
+
+- `type === "OutboundMessage"`
+- `status === "delivered"`
+- `userId` is present (a human agent sent it, not the bot)
+- `locationId` and `contactId` are present
+
+### Request body
+
+| Field        | Type   | Notes                                                       |
+| ------------ | ------ | ----------------------------------------------------------- |
+| `type`       | string | Must be `OutboundMessage` to act                            |
+| `status`     | string | Must be `delivered` to act                                  |
+| `locationId` | string | GHL location the conversation belongs to                    |
+| `contactId`  | string | The contact whose AI should be stopped                      |
+| `messageId`  | string | Used as the idempotency key and the job/trace id            |
+| `userId`     | string | The GHL user who replied — gates `non_blocking_users`       |
+
+Deduplicated on `messageId` via Redis `SET NX EX` (`IDEMPOTENCY_TTL_SECONDS`);
+a repeat returns `{ "ok": true, "deduplicated": true }`.
+
+### What it does on a human takeover
+
+If `userId` is in the group's `general_settings.non_blocking_users`, the
+whole flow is skipped (that user is allowed to reply without stopping the
+AI) and the response is `{ "ok": true, "skipped": "non_blocking_user" }`.
+
+Otherwise it:
+
+1. **Cancels pending insistences** for the contact (best-effort —
+   failures are swallowed and never abort the steps below).
+2. **Updates the contact's custom fields in a single
+   `PUT $GHL_API_BASE_URL/contacts/{id}`**, writing whichever of these apply:
+   - **AI gate** → sets `general_settings.ai_field_id` to `Disabled`, so the
+     next inbound flush is stopped by the AI gate. Skipped when the group has
+     no `ai_field_id` configured.
+   - **Agent override** → clears the contact custom field whose `fieldKey` is
+     `AGENT_FIELD_KEY` (default `contact.aiagent`) by setting it to an empty
+     value, so a future inbound message falls back to the channel/default
+     agent instead of the pinned one (see the inbound `agent_id` precedence
+     above). The field id is resolved from `GET
+     $GHL_API_BASE_URL/locations/{id}/customFields` (cached per location,
+     shared with the inbound lookups). The clear is **unconditional** — no
+     contact GET is performed first, since clearing an already-empty field is
+     idempotent.
+
+Both writes go out in **one PUT**. The agent-override clear is best-effort:
+if the definitions lookup fails or the location has no `aiagent` field, that
+field is omitted and the AI gate is still disabled.
+
+### Responses
+
+| Body                                          | When                                                              |
+| --------------------------------------------- | ---------------------------------------------------------------- |
+| `{ "ok": true }`                              | Ignored shape (not a delivered OutboundMessage / no `userId` / missing ids) |
+| `{ "ok": true, "deduplicated": true }`        | `messageId` already seen within the idempotency window           |
+| `{ "ok": true, "skipped": "non_blocking_user" }` | `userId` is in `non_blocking_users`                           |
+| `{ "ok": true, "skipped": "nothing_to_update" }` | No `ai_field_id` configured **and** no `aiagent` field resolved |
+| `{ "ok": true, "updated": true }`             | The contact PUT succeeded (AI disabled and/or `aiagent` cleared) |
+
+Failure handling on the contact PUT matches the rest of the pipeline: `4xx`
+is treated as a misconfiguration and swallowed (returns `200`), while `5xx` /
+network errors are re-thrown so GHL retries the webhook.
+
 ## `GET /v1/health/live`
 
 Liveness probe. Returns `{ "status": "ok" }` as long as the process is
