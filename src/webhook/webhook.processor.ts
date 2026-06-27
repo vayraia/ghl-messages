@@ -3,6 +3,7 @@ import { Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Job, UnrecoverableError } from 'bullmq';
 import { AppEnv } from '../config/env.validation';
+import { isAiAvailable } from './ai-schedule';
 import { resolveAgentForChannel } from './channel-resolver';
 import { ChatMessage, WebhookForwarder } from './webhook-forwarder';
 import {
@@ -32,7 +33,7 @@ export interface FlushResult {
   chatStatus?: number;
   ghlStatus?: number;
   totalMs: number;
-  skipped?: 'ai_disabled' | 'no_default_agent';
+  skipped?: 'ai_disabled' | 'no_default_agent' | 'ai_off_hours';
 }
 
 /**
@@ -98,6 +99,30 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
     }
 
     const group = await this.groupFetcher.fetch(locationId, String(job.id));
+
+    // Availability gate: if the group defines an `ai_schedule` and the current
+    // time falls outside its active window, do not invoke the AI. This covers
+    // BOTH sources — inbound replies and workflow-sourced flushes (insistence
+    // follow-ups): if the AI may not reply to a contact right now, it must not
+    // nudge them either. Absent/null schedule => 24/7 (no change).
+    if (!isAiAvailable(group.aiSchedule, new Date())) {
+      this.logger.log(
+        {
+          jobId: job.id,
+          locationId,
+          contactId,
+          source,
+          timezone: group.aiSchedule?.timezone,
+        },
+        'AI gate stopped flow — outside ai_schedule window',
+      );
+      return {
+        ok: true,
+        drained: items.length,
+        totalMs: Date.now() - started,
+        skipped: 'ai_off_hours',
+      };
+    }
 
     // The contact is fetched up-front: inbound agent resolution can be
     // overridden by a per-contact custom field, and the AI gate + custom_fields

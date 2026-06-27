@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import axios, { AxiosError, AxiosInstance } from 'axios';
 import { UnrecoverableError } from 'bullmq';
 import { AppEnv } from '../config/env.validation';
+import { AiSchedule, DAY_KEYS, DaySchedule } from './ai-schedule';
 import { ChannelAgents } from './channel-resolver';
 
 export interface InsistenceEntry {
@@ -31,6 +32,7 @@ export interface GroupSettings {
   channelAgents?: ChannelAgents;
   nonBlockingUsers?: NonBlockingUser[];
   whatsappNumberId?: string;
+  aiSchedule?: AiSchedule;
 }
 
 interface GroupResponse {
@@ -43,6 +45,7 @@ interface GroupResponse {
     channel_agents?: unknown;
     non_blocking_users?: unknown;
     whatsapp_number_id?: unknown;
+    ai_schedule?: unknown;
     [key: string]: unknown;
   };
   [key: string]: unknown;
@@ -124,6 +127,7 @@ export class GroupFetcher {
         channelAgents: parseChannelAgents(body.general_settings?.channel_agents),
         nonBlockingUsers: parseNonBlockingUsers(body.general_settings?.non_blocking_users),
         whatsappNumberId: parseWhatsappNumberId(body.general_settings?.whatsapp_number_id),
+        aiSchedule: parseAiSchedule(body.general_settings?.ai_schedule),
       };
     }
 
@@ -182,6 +186,38 @@ function parseChannelAgents(raw: unknown): ChannelAgents | undefined {
     if (trimmed.length > 0) out[key] = trimmed;
   }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/**
+ * Parses `general_settings.ai_schedule` defensively: only keeps days whose
+ * `start`/`end` are valid `"HH:mm"` strings, coerces `active` to a strict
+ * boolean, and trims the timezone. Returns `undefined` when no usable day is
+ * present so the processor treats it as "no restriction" (24/7).
+ */
+function parseAiSchedule(raw: unknown): AiSchedule | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const r = raw as Record<string, unknown>;
+
+  const out: AiSchedule = {};
+  const tz = typeof r.timezone === 'string' ? r.timezone.trim() : '';
+  if (tz) out.timezone = tz;
+
+  let hasDay = false;
+  for (const day of DAY_KEYS) {
+    const d = r[day];
+    if (!d || typeof d !== 'object' || Array.isArray(d)) continue;
+    const dr = d as { active?: unknown; start?: unknown; end?: unknown };
+    const start = typeof dr.start === 'string' ? dr.start.trim() : '';
+    const end = typeof dr.end === 'string' ? dr.end.trim() : '';
+    if (!HHMM_RE.test(start) || !HHMM_RE.test(end)) continue;
+    const entry: DaySchedule = { active: dr.active === true, start, end };
+    out[day] = entry;
+    hasDay = true;
+  }
+
+  return hasDay ? out : undefined;
 }
 
 function parseInsistenceSchedule(raw: unknown): InsistenceSchedule | undefined {
