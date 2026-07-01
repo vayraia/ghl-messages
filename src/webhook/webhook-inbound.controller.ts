@@ -1,5 +1,6 @@
-import { Body, Controller, HttpCode, HttpStatus, Inject, Logger, Post } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Inject, Logger, Post, Req } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { Request } from 'express';
 import { Redis } from 'ioredis';
 import { AppEnv } from '../config/env.validation';
 import { resolveInboundChannel } from './channel-resolver';
@@ -27,6 +28,7 @@ interface InboundResponse {
 export class WebhookInboundController {
   private readonly logger = new Logger(WebhookInboundController.name);
   private readonly idempotencyTtlSeconds: number;
+  private readonly logRawInbound: boolean;
 
   constructor(
     private readonly debouncer: MessageDebouncer,
@@ -34,26 +36,24 @@ export class WebhookInboundController {
     config: ConfigService<AppEnv, true>,
   ) {
     this.idempotencyTtlSeconds = config.get('IDEMPOTENCY_TTL_SECONDS', { infer: true });
+    this.logRawInbound = config.get('LOG_INBOUND_RAW', { infer: true });
   }
 
   @Post('inbound')
   @HttpCode(HttpStatus.OK)
-  async inbound(@Body() body: InboundMessagePayloadDto): Promise<InboundResponse> {
-    // Emitted at DEBUG so the high-volume inbound path pays nothing at the
-    // default INFO level (pino skips serialization when the level is disabled).
-    // Only the identifying fields are logged — never the full body — so even
-    // with DEBUG on there is no per-event JSON.stringify of the whole payload.
-    this.logger.debug(
-      {
-        type: body.type,
-        direction: body.direction,
-        status: body.status,
-        locationId: body.locationId,
-        contactId: body.contactId,
-        messageId: body.messageId,
-      },
-      'inbound webhook received',
-    );
+  async inbound(
+    @Body() body: InboundMessagePayloadDto,
+    @Req() req?: Request,
+  ): Promise<InboundResponse> {
+    // Debug-only: log the FULL raw inbound payload (before whitelist stripping)
+    // at INFO so it is visible regardless of log level. `req.body` is the
+    // untransformed JSON parsed by body-parser, so it keeps every field the
+    // DTO whitelist would otherwise drop (from, to, webhookId, dateAdded, …).
+    // Gated behind LOG_INBOUND_RAW because it is verbose and serializes every
+    // payload on the high-volume inbound path — keep it off in normal operation.
+    if (this.logRawInbound) {
+      this.logger.log({ rawBody: req?.body as unknown }, 'inbound webhook raw payload');
+    }
 
     if (
       body.type !== 'InboundMessage' ||

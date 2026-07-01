@@ -59,6 +59,11 @@ export interface AppEnv {
   MESSAGE_DEBOUNCE_MS: number;
   IDEMPOTENCY_TTL_SECONDS: number;
 
+  // Debug toggle: when true, POST /webhook/v1/inbound logs the full raw request
+  // body (pre-whitelist) at INFO. Verbose + serializes every inbound payload,
+  // so keep it off in normal operation and only flip on to capture samples.
+  LOG_INBOUND_RAW: boolean;
+
   // Bull Board dashboard. Off by default; when on, exposes a Basic-Auth-gated
   // queue UI at /admin/queues on the HTTP tier (never on the worker).
   BULL_BOARD_ENABLED: boolean;
@@ -137,6 +142,8 @@ export const envValidationSchema = Joi.object<AppEnv, true>({
 
   MESSAGE_DEBOUNCE_MS: Joi.number().integer().min(0).default(10_000),
   IDEMPOTENCY_TTL_SECONDS: Joi.number().integer().min(1).default(3600),
+
+  LOG_INBOUND_RAW: Joi.boolean().default(false),
 
   BULL_BOARD_ENABLED: Joi.boolean().default(false),
   // Credentials are required only when the dashboard is enabled, so the default

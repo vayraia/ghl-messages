@@ -45,6 +45,9 @@ WEBHOOK_JOB_BACKOFF_MS=2000
 MESSAGE_DEBOUNCE_MS=10000
 # How long an x-idempotency-key is remembered as "already seen".
 IDEMPOTENCY_TTL_SECONDS=3600
+# Debug toggle: log the FULL raw /webhook/v1/inbound payload (pre-whitelist) at
+# INFO. Verbose — flip on only to capture sample payloads, then turn back off.
+LOG_INBOUND_RAW=false
 
 # --- Chat API (your AI service) ---
 # Root URL only. The worker POSTs to ${CHAT_API_URL}/chat and expects a
