@@ -1,0 +1,41 @@
+# Dependencies — reinstalled inside the image via `npm ci`. Shipping the local
+# node_modules in the build context is what bloats it to hundreds of MB and can
+# OOM memory-constrained builders.
+node_modules
+**/node_modules
+
+# Build output — produced inside the image by `npm run build`.
+dist
+build
+
+# VCS / CI
+.git
+.gitignore
+.github
+
+# Local env & secrets (never bake into the image; injected at runtime)
+.env
+.env.*
+!.env.example
+
+# Tests, coverage, and TS build info
+coverage
+test
+**/*.spec.ts
+**/*.e2e-spec.ts
+*.tsbuildinfo
+
+# Editor / OS cruft
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Docker / compose (not needed inside the image)
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Logs & scratch
+*.log
+npm-debug.log*
