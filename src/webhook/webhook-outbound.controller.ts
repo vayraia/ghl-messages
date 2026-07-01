@@ -36,6 +36,19 @@ export class WebhookOutboundController {
   @Post('outbound')
   @HttpCode(HttpStatus.OK)
   async outbound(@Body() body: OutboundWebhookPayloadDto): Promise<OutboundResponse> {
+    // ────────────────────────────────────────────────────────────────────────
+    // ENDPOINT DISABLED (commented out, not deleted): the /outbound webhook now
+    // does NOTHING — it just acknowledges with `{ ok: true }`. The entire
+    // original body is preserved below for reference / future re-enable:
+    //   • type/status filter, userId check, locationId/contactId validation
+    //   • Redis idempotency guard
+    //   • group fetch, non-blocking-user skip, insistence cancel
+    //   • contact custom-field writes (AI disable + aiagent clear)
+    // To re-enable, delete this early `return` and remove the comment markers.
+    // ────────────────────────────────────────────────────────────────────────
+    return { ok: true };
+
+    /*
     this.logger.log(`outbound payload: ${JSON.stringify(body)}`);
 
     if (body.type !== 'OutboundMessage' || body.status !== 'delivered') {
@@ -73,6 +86,20 @@ export class WebhookOutboundController {
       }
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // TEMPORARILY DISABLED (commented out, not deleted): everything from the
+    // group fetch onward — group config lookup, non-blocking-user skip,
+    // insistence cancel, and the contact custom-field writes (AI disable +
+    // aiagent clear). With this block off, a delivered OutboundMessage that
+    // passes the filters above (steps 1–4) is acknowledged with `{ ok: true }`
+    // and NO side effects: the AI is no longer disabled on human takeover and
+    // pending insistences are no longer cancelled. Re-enable by removing the
+    // comment markers and deleting the early `return` below.
+    // ────────────────────────────────────────────────────────────────────────
+    return { ok: true };
+    */
+
+    /*
     const jobId = body.messageId ?? `${contactId}:${locationId}`;
 
     let group;
@@ -157,6 +184,7 @@ export class WebhookOutboundController {
       }
       throw err;
     }
+    */
   }
 
   /**
