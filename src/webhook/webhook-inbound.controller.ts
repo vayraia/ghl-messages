@@ -39,7 +39,21 @@ export class WebhookInboundController {
   @Post('inbound')
   @HttpCode(HttpStatus.OK)
   async inbound(@Body() body: InboundMessagePayloadDto): Promise<InboundResponse> {
-    this.logger.log(`inbound raw body: ${JSON.stringify(body)}`);
+    // Emitted at DEBUG so the high-volume inbound path pays nothing at the
+    // default INFO level (pino skips serialization when the level is disabled).
+    // Only the identifying fields are logged — never the full body — so even
+    // with DEBUG on there is no per-event JSON.stringify of the whole payload.
+    this.logger.debug(
+      {
+        type: body.type,
+        direction: body.direction,
+        status: body.status,
+        locationId: body.locationId,
+        contactId: body.contactId,
+        messageId: body.messageId,
+      },
+      'inbound webhook received',
+    );
 
     if (
       body.type !== 'InboundMessage' ||

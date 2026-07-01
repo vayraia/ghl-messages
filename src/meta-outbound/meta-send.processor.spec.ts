@@ -97,3 +97,39 @@ describe('MetaSendProcessor', () => {
     await expect(sut.process(makeJob())).rejects.toThrow('503');
   });
 });
+
+describe('MetaSendProcessor.onApplicationBootstrap', () => {
+  function bootWith(processJobs: boolean | undefined) {
+    const values: Record<string, unknown> = {
+      PROCESS_JOBS: processJobs,
+      META_OUTBOUND_CONCURRENCY: 10,
+    };
+    const config = {
+      get: (key: string) => values[key],
+    } as unknown as ConfigService<AppEnv, true>;
+    const sut = new MetaSendProcessor(
+      config,
+      {} as unknown as MetaChannelRepository,
+      {} as unknown as WhatsAppCloudClient,
+    );
+    // WorkerHost exposes `worker` as a getter-only property, so stub it via
+    // defineProperty rather than a plain assignment.
+    const worker = { close: jest.fn().mockResolvedValue(undefined), concurrency: 0 };
+    Object.defineProperty(sut, 'worker', { get: () => worker, configurable: true });
+    return { sut, worker };
+  }
+
+  it('closes the worker and does not set concurrency when PROCESS_JOBS=false', async () => {
+    const { sut, worker } = bootWith(false);
+    await sut.onApplicationBootstrap();
+    expect(worker.close).toHaveBeenCalledTimes(1);
+    expect(worker.concurrency).toBe(0);
+  });
+
+  it('sets concurrency and keeps the worker open when PROCESS_JOBS=true', async () => {
+    const { sut, worker } = bootWith(true);
+    await sut.onApplicationBootstrap();
+    expect(worker.close).not.toHaveBeenCalled();
+    expect(worker.concurrency).toBe(10);
+  });
+});

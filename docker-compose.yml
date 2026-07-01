@@ -20,6 +20,8 @@ services:
     env_file: .env
     environment:
       REDIS_URL: redis://redis:6379/0
+      # HTTP tier only ingests + enqueues; the worker service drains the queues.
+      PROCESS_JOBS: "false"
     depends_on:
       redis:
         condition: service_healthy
@@ -33,6 +35,8 @@ services:
     env_file: .env
     environment:
       REDIS_URL: redis://redis:6379/0
+      # Dedicated job processor. Explicit for clarity (true is the default).
+      PROCESS_JOBS: "true"
     depends_on:
       redis:
         condition: service_healthy

@@ -64,9 +64,16 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
     super();
   }
 
-  onApplicationBootstrap(): void {
-    const concurrency = this.config.get('WEBHOOK_WORKER_CONCURRENCY', { infer: true });
-    this.worker.concurrency = concurrency;
+  async onApplicationBootstrap(): Promise<void> {
+    // Ingest-only tiers (PROCESS_JOBS=false, e.g. the HTTP/API process) close
+    // the auto-started worker so its event loop isn't competing with job
+    // processing. The dedicated worker process keeps the default and drains.
+    if (!this.config.get('PROCESS_JOBS', { infer: true })) {
+      await this.worker.close();
+      this.logger.log('PROCESS_JOBS=false — webhook worker closed (ingest-only process)');
+      return;
+    }
+    this.worker.concurrency = this.config.get('WEBHOOK_WORKER_CONCURRENCY', { infer: true });
   }
 
   async process(

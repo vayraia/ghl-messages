@@ -32,6 +32,12 @@ export interface AppEnv {
 
   REDIS_URL: string;
 
+  // When false, this process does NOT drain the BullMQ queues (its
+  // auto-started workers are closed on boot). Set it on the HTTP/API tier so
+  // it only ingests + enqueues; the dedicated worker process keeps the default
+  // (true) and does the job processing.
+  PROCESS_JOBS: boolean;
+
   WEBHOOK_WORKER_CONCURRENCY: number;
   WEBHOOK_JOB_ATTEMPTS: number;
   WEBHOOK_JOB_BACKOFF_MS: number;
@@ -101,7 +107,13 @@ export const envValidationSchema = Joi.object<AppEnv, true>({
     .uri({ scheme: ['redis', 'rediss'] })
     .required(),
 
-  WEBHOOK_WORKER_CONCURRENCY: Joi.number().integer().min(1).default(20),
+  PROCESS_JOBS: Joi.boolean().default(true),
+
+  // Default tuned for the single-process deployment (one main.js does HTTP +
+  // job processing). 20 saturated CPU under bursts; 6 keeps enough throughput
+  // (downstream APIs are the real bottleneck) without starving HTTP ingestion.
+  // Bump it back up when running a dedicated worker process.
+  WEBHOOK_WORKER_CONCURRENCY: Joi.number().integer().min(1).default(6),
   WEBHOOK_JOB_ATTEMPTS: Joi.number().integer().min(1).default(2),
   WEBHOOK_JOB_BACKOFF_MS: Joi.number().integer().min(0).default(2000),
 

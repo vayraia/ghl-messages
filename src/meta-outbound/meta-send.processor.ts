@@ -33,7 +33,14 @@ export class MetaSendProcessor extends WorkerHost implements OnApplicationBootst
     super();
   }
 
-  onApplicationBootstrap(): void {
+  async onApplicationBootstrap(): Promise<void> {
+    // Ingest-only tiers (PROCESS_JOBS=false) close the auto-started worker so
+    // job processing stays on the dedicated worker process only.
+    if (!this.config.get('PROCESS_JOBS', { infer: true })) {
+      await this.worker.close();
+      this.logger.log('PROCESS_JOBS=false — meta-outbound worker closed (ingest-only process)');
+      return;
+    }
     this.worker.concurrency = this.config.get('META_OUTBOUND_CONCURRENCY', { infer: true });
   }
 

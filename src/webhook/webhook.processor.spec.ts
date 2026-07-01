@@ -1225,4 +1225,38 @@ describe('WebhookProcessor.process', () => {
       expect(sent).not.toHaveProperty('whatsappMedia');
     });
   });
+
+  describe('onApplicationBootstrap', () => {
+    function bootWith(processJobs: boolean | undefined) {
+      const values: Record<string, unknown> = {
+        PROCESS_JOBS: processJobs,
+        WEBHOOK_WORKER_CONCURRENCY: 20,
+      };
+      const config = {
+        get: (key: string) => values[key],
+      } as unknown as ConfigService<AppEnv, true>;
+      const { processor } = makeProcessor();
+      // Swap in the config that carries PROCESS_JOBS.
+      (processor as unknown as { config: ConfigService<AppEnv, true> }).config = config;
+      // WorkerHost exposes `worker` as a getter-only property, so stub it via
+      // defineProperty rather than a plain assignment.
+      const worker = { close: jest.fn().mockResolvedValue(undefined), concurrency: 0 };
+      Object.defineProperty(processor, 'worker', { get: () => worker, configurable: true });
+      return { processor, worker };
+    }
+
+    it('closes the worker and does not set concurrency when PROCESS_JOBS=false', async () => {
+      const { processor, worker } = bootWith(false);
+      await processor.onApplicationBootstrap();
+      expect(worker.close).toHaveBeenCalledTimes(1);
+      expect(worker.concurrency).toBe(0);
+    });
+
+    it('sets concurrency and keeps the worker open when PROCESS_JOBS=true', async () => {
+      const { processor, worker } = bootWith(true);
+      await processor.onApplicationBootstrap();
+      expect(worker.close).not.toHaveBeenCalled();
+      expect(worker.concurrency).toBe(20);
+    });
+  });
 });
