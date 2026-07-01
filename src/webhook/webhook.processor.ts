@@ -27,13 +27,20 @@ import { WEBHOOK_FLUSH_JOB, WEBHOOK_QUEUE_TOKEN } from './webhook.tokens';
  */
 const CHAT_MESSAGE_DELAY_MS = 2500;
 
+/**
+ * Contact tag that hard-stops the AI flow. When the GHL contact carries this
+ * tag, the flush is skipped entirely (no agent resolution, no forward). Matched
+ * case-insensitively against the contact's normalized tags.
+ */
+const AI_DISABLE_TAG = 'desactivar ia';
+
 export interface FlushResult {
   ok: true;
   drained: number;
   chatStatus?: number;
   ghlStatus?: number;
   totalMs: number;
-  skipped?: 'ai_disabled' | 'no_default_agent' | 'ai_off_hours';
+  skipped?: 'ai_disabled' | 'ai_disabled_tag' | 'no_default_agent' | 'ai_off_hours';
 }
 
 /**
@@ -132,6 +139,23 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
       contactId,
       apiKey: group.apiKey,
     });
+
+    // Hard stop: a contact tagged with "desactivar ia" opts out of the AI
+    // entirely. Skip everything downstream (agent resolution, AI gate, forward)
+    // and drop the drained messages. Tags are already normalized (lowercased +
+    // trimmed) by the contact client; `?? []` tolerates a partial contact.
+    if ((contact.tags ?? []).includes(AI_DISABLE_TAG)) {
+      this.logger.log(
+        { jobId: job.id, contactId, locationId, tag: AI_DISABLE_TAG, drained: items.length },
+        'Flow skipped — contact has "desactivar ia" tag',
+      );
+      return {
+        ok: true,
+        drained: items.length,
+        totalMs: Date.now() - started,
+        skipped: 'ai_disabled_tag',
+      };
+    }
 
     // Inbound flushes resolve agentId with this precedence:
     //   contact.<AGENT_FIELD_KEY> (e.g. contact.aiagent) when set

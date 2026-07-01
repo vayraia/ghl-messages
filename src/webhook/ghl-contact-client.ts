@@ -45,6 +45,8 @@ export interface GetContactResult {
   email?: string;
   phone?: string;
   assignedTo?: string;
+  /** The contact's tags, normalized to lowercased+trimmed strings. */
+  tags: string[];
   durationMs: number;
 }
 
@@ -157,6 +159,7 @@ export class GhlContactClient {
       const email = extractContactString(response.data, 'email');
       const phone = extractContactString(response.data, 'phone');
       const assignedTo = extractAssignedTo(response.data);
+      const tags = extractTags(response.data);
       this.logger.debug(
         {
           jobId: input.jobId,
@@ -164,10 +167,11 @@ export class GhlContactClient {
           status,
           durationMs,
           fieldCount: customFields.length,
+          tagCount: tags.length,
         },
         'GHL contact read',
       );
-      return { status, customFields, firstName, email, phone, assignedTo, durationMs };
+      return { status, customFields, firstName, email, phone, assignedTo, tags, durationMs };
     }
 
     const summary = summarizeBody(response.data);
@@ -521,6 +525,31 @@ function extractCustomFields(data: unknown): ContactCustomField[] {
     const e = entry as { id?: unknown; value?: unknown };
     if (typeof e.id !== 'string' || e.id.length === 0) continue;
     out.push({ id: e.id, value: e.value });
+  }
+  return out;
+}
+
+/**
+ * Extracts the contact's tags from a GHL contact GET response. Tolerates both
+ * top-level `tags` and nested `contact.tags`, keeps only non-blank strings, and
+ * normalizes each to `trim().toLowerCase()` so callers can match tags without
+ * worrying about casing or surrounding whitespace. Returns `[]` on any
+ * unexpected structure.
+ */
+function extractTags(data: unknown): string[] {
+  if (!data || typeof data !== 'object') return [];
+  const root = data as { tags?: unknown; contact?: { tags?: unknown } };
+  const raw = Array.isArray(root.tags)
+    ? root.tags
+    : Array.isArray(root.contact?.tags)
+      ? root.contact!.tags
+      : null;
+  if (!raw) return [];
+  const out: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'string') continue;
+    const normalized = entry.trim().toLowerCase();
+    if (normalized.length > 0) out.push(normalized);
   }
   return out;
 }

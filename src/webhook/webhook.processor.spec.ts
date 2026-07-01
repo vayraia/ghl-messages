@@ -20,7 +20,9 @@ function makeProcessor() {
     cancel: jest.fn(),
   } as unknown as InsistenceClient;
   const contactClient = {
-    get: jest.fn().mockResolvedValue({ status: 200, customFields: [], firstName: undefined }),
+    get: jest
+      .fn()
+      .mockResolvedValue({ status: 200, customFields: [], firstName: undefined, tags: [] }),
     listCustomFields: jest.fn().mockResolvedValue(new Map<string, string>()),
     listFieldDefs: jest.fn().mockResolvedValue({
       idToName: new Map<string, string>(),
@@ -365,6 +367,68 @@ describe('WebhookProcessor.process', () => {
 
       await expect(p.processor.process(makeJob())).rejects.toThrow(/503/);
       expect(p.forwarder.forward).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('desactivar ia tag', () => {
+    function setupHappyPathMocks(p: ReturnType<typeof makeProcessor>) {
+      (p.debouncer.drain as jest.Mock).mockResolvedValue(sampleItems);
+      (p.forwarder.forward as jest.Mock).mockResolvedValue({
+        messages: [{ type: 'text', content: 'reply' }],
+        durationMs: 1,
+      });
+      (p.ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 1 });
+      (p.insistence.schedule as jest.Mock).mockResolvedValue(undefined);
+      (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({ apiKey: 'k' });
+    }
+
+    it('skips the whole flow when the contact has the "desactivar ia" tag', async () => {
+      const p = makeProcessor();
+      setupHappyPathMocks(p);
+      (p.contactClient.get as jest.Mock).mockResolvedValue({
+        status: 200,
+        customFields: [],
+        tags: ['cliente', 'desactivar ia'],
+      });
+
+      const result = await p.processor.process(makeJob());
+
+      expect(p.contactClient.get).toHaveBeenCalled();
+      expect(p.forwarder.forward).not.toHaveBeenCalled();
+      expect(p.ghl.send).not.toHaveBeenCalled();
+      expect(p.insistence.schedule).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ ok: true, drained: 1, skipped: 'ai_disabled_tag' });
+    });
+
+    it('continues the flow when the contact does not have the tag', async () => {
+      const p = makeProcessor();
+      setupHappyPathMocks(p);
+      (p.contactClient.get as jest.Mock).mockResolvedValue({
+        status: 200,
+        customFields: [],
+        tags: ['cliente', 'vip'],
+      });
+
+      const result = await p.processor.process(makeJob());
+
+      expect(p.forwarder.forward).toHaveBeenCalled();
+      expect(p.ghl.send).toHaveBeenCalled();
+      expect(result).not.toHaveProperty('skipped');
+    });
+
+    it('continues the flow when the contact has no tags', async () => {
+      const p = makeProcessor();
+      setupHappyPathMocks(p);
+      (p.contactClient.get as jest.Mock).mockResolvedValue({
+        status: 200,
+        customFields: [],
+        tags: [],
+      });
+
+      await p.processor.process(makeJob());
+
+      expect(p.forwarder.forward).toHaveBeenCalled();
+      expect(p.ghl.send).toHaveBeenCalled();
     });
   });
 

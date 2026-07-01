@@ -142,6 +142,33 @@ describe('GhlContactClient', () => {
       expect(missing.assignedTo).toBeUndefined();
     });
 
+    it('extracts tags (top-level and nested), normalizing case/whitespace and dropping non-strings', async () => {
+      const { client, get } = makeClient();
+      get.mockResolvedValueOnce({
+        status: 200,
+        data: { tags: ['Desactivar IA', '  VIP  '], customFields: [] },
+      });
+      get.mockResolvedValueOnce({
+        status: 200,
+        data: { contact: { tags: ['cliente'], customFields: [] } },
+      });
+      get.mockResolvedValueOnce({
+        status: 200,
+        data: { tags: ['ok', 42, null, '   ', ''], customFields: [] },
+      });
+      get.mockResolvedValueOnce({ status: 200, data: { customFields: [] } });
+
+      const top = await client.get({ jobId: 'j', contactId: 'c_1', apiKey: 'k' });
+      const nested = await client.get({ jobId: 'j', contactId: 'c_2', apiKey: 'k' });
+      const dirty = await client.get({ jobId: 'j', contactId: 'c_3', apiKey: 'k' });
+      const missing = await client.get({ jobId: 'j', contactId: 'c_4', apiKey: 'k' });
+
+      expect(top.tags).toEqual(['desactivar ia', 'vip']);
+      expect(nested.tags).toEqual(['cliente']);
+      expect(dirty.tags).toEqual(['ok']);
+      expect(missing.tags).toEqual([]);
+    });
+
     it('extracts email/phone (top-level and nested), trimming and omitting blanks', async () => {
       const { client, get } = makeClient();
       get.mockResolvedValueOnce({
