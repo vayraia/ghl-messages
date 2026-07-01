@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import { AppModule } from './app.module';
 import { AppEnv } from './config/env.validation';
+import { setupBullBoard } from './common/bull-board/bull-board.setup';
 
 // Meta webhooks require HMAC-SHA256 over the raw request body. The JSON
 // parser consumes the buffer, so we copy it into `req.rawBody` first via
@@ -29,6 +30,11 @@ async function bootstrap(): Promise<void> {
   const config = app.get(ConfigService<AppEnv, true>);
   const port = config.get('PORT', { infer: true });
   const bodyLimit = config.get('BODY_LIMIT', { infer: true });
+
+  // Mount the Bull Board dashboard (no-op unless BULL_BOARD_ENABLED) BEFORE
+  // helmet so its inline assets are not blocked by the global CSP. It is
+  // Basic-Auth-gated and only served on this HTTP tier, never on the worker.
+  setupBullBoard(app, config);
 
   app.use(helmet());
   app.use(compression());

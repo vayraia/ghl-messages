@@ -26,6 +26,8 @@
     "migration:generate": "npm run typeorm -- migration:generate"
   },
   "dependencies": {
+    "@bull-board/api": "^8.0.2",
+    "@bull-board/express": "^8.0.2",
     "@nestjs/bullmq": "^10.2.1",
     "@nestjs/common": "^10.4.4",
     "@nestjs/config": "^3.2.3",

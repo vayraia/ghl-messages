@@ -52,6 +52,12 @@ export interface AppEnv {
 
   MESSAGE_DEBOUNCE_MS: number;
   IDEMPOTENCY_TTL_SECONDS: number;
+
+  // Bull Board dashboard. Off by default; when on, exposes a Basic-Auth-gated
+  // queue UI at /admin/queues on the HTTP tier (never on the worker).
+  BULL_BOARD_ENABLED: boolean;
+  BULL_BOARD_USER?: string;
+  BULL_BOARD_PASSWORD?: string;
 }
 
 export const envValidationSchema = Joi.object<AppEnv, true>({
@@ -85,7 +91,7 @@ export const envValidationSchema = Joi.object<AppEnv, true>({
   GRAPH_API_TIMEOUT_MS: Joi.number().integer().min(100).default(10_000),
 
   META_OUTBOUND_CONCURRENCY: Joi.number().integer().min(1).default(10),
-  META_OUTBOUND_JOB_ATTEMPTS: Joi.number().integer().min(1).default(5),
+  META_OUTBOUND_JOB_ATTEMPTS: Joi.number().integer().min(1).default(2),
   META_OUTBOUND_BACKOFF_MS: Joi.number().integer().min(0).default(2000),
 
   THROTTLE_TTL_SECONDS: Joi.number().integer().min(1).default(60),
@@ -96,7 +102,7 @@ export const envValidationSchema = Joi.object<AppEnv, true>({
     .required(),
 
   WEBHOOK_WORKER_CONCURRENCY: Joi.number().integer().min(1).default(20),
-  WEBHOOK_JOB_ATTEMPTS: Joi.number().integer().min(1).default(5),
+  WEBHOOK_JOB_ATTEMPTS: Joi.number().integer().min(1).default(2),
   WEBHOOK_JOB_BACKOFF_MS: Joi.number().integer().min(0).default(2000),
 
   CHAT_API_URL: Joi.string()
@@ -119,4 +125,14 @@ export const envValidationSchema = Joi.object<AppEnv, true>({
 
   MESSAGE_DEBOUNCE_MS: Joi.number().integer().min(0).default(10_000),
   IDEMPOTENCY_TTL_SECONDS: Joi.number().integer().min(1).default(3600),
+
+  BULL_BOARD_ENABLED: Joi.boolean().default(false),
+  // Credentials are required only when the dashboard is enabled, so the default
+  // (disabled) config needs neither.
+  BULL_BOARD_USER: Joi.string()
+    .min(3)
+    .when('BULL_BOARD_ENABLED', { is: true, then: Joi.required(), otherwise: Joi.optional() }),
+  BULL_BOARD_PASSWORD: Joi.string()
+    .min(12)
+    .when('BULL_BOARD_ENABLED', { is: true, then: Joi.required(), otherwise: Joi.optional() }),
 });
