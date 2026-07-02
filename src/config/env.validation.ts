@@ -71,6 +71,18 @@ export interface AppEnv {
   // so keep it off in normal operation and only flip on to capture samples.
   LOG_INBOUND_RAW: boolean;
 
+  // When true (default), an inbound flush whose attachments include a video is
+  // dropped in full (text included) before being forwarded to the AI. GHL's
+  // payload can't distinguish a video from an audio (both arrive as a `.mp4`
+  // URL with an empty body and a channel-only `contentType`), so the worker
+  // probes each attachment's real Content-Type with a HEAD. Set to false to
+  // forward videos as normal attachments.
+  DROP_INBOUND_VIDEO: boolean;
+
+  // Timeout (ms) for the per-attachment HEAD request used to classify media
+  // type. Kept short since it runs inline in the worker before forwarding.
+  MEDIA_HEAD_TIMEOUT_MS: number;
+
   // Bull Board dashboard. Off by default; when on, exposes a Basic-Auth-gated
   // queue UI at /admin/queues on the HTTP tier (never on the worker).
   BULL_BOARD_ENABLED: boolean;
@@ -153,6 +165,9 @@ export const envValidationSchema = Joi.object<AppEnv, true>({
   INBOUND_MAX_AGE_SECONDS: Joi.number().integer().min(0).default(0),
 
   LOG_INBOUND_RAW: Joi.boolean().default(false),
+
+  DROP_INBOUND_VIDEO: Joi.boolean().default(true),
+  MEDIA_HEAD_TIMEOUT_MS: Joi.number().integer().min(100).default(5000),
 
   BULL_BOARD_ENABLED: Joi.boolean().default(false),
   // Credentials are required only when the dashboard is enabled, so the default

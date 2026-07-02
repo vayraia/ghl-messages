@@ -5,6 +5,7 @@ import { MessageDebouncer, DebouncedMessage, FlushJobData } from './message-debo
 import { WebhookForwarder } from './webhook-forwarder';
 import { GhlContactClient } from './ghl-contact-client';
 import { GhlReply } from './ghl-reply';
+import { AttachmentClassifier } from './attachment-classifier';
 import { GroupFetcher } from './group-fetcher';
 import { InsistenceClient } from './insistence-client';
 import { WEBHOOK_FLUSH_JOB } from './webhook.tokens';
@@ -14,6 +15,9 @@ function makeProcessor() {
   const debouncer = { drain: jest.fn() } as unknown as MessageDebouncer;
   const forwarder = { forward: jest.fn() } as unknown as WebhookForwarder;
   const ghl = { send: jest.fn() } as unknown as GhlReply;
+  const classifier = {
+    containsVideo: jest.fn().mockResolvedValue(false),
+  } as unknown as AttachmentClassifier;
   const groupFetcher = { fetch: jest.fn() } as unknown as GroupFetcher;
   const insistence = {
     schedule: jest.fn(),
@@ -37,7 +41,9 @@ function makeProcessor() {
         ? 5
         : key === 'AGENT_FIELD_KEY'
           ? 'contact.aiagent'
-          : undefined,
+          : key === 'DROP_INBOUND_VIDEO'
+            ? true
+            : undefined,
   } as unknown as ConfigService<AppEnv, true>;
 
   const processor = new WebhookProcessor(
@@ -45,12 +51,22 @@ function makeProcessor() {
     debouncer,
     forwarder,
     ghl,
+    classifier,
     groupFetcher,
     insistence,
     contactClient,
   );
 
-  return { processor, debouncer, forwarder, ghl, groupFetcher, insistence, contactClient };
+  return {
+    processor,
+    debouncer,
+    forwarder,
+    ghl,
+    classifier,
+    groupFetcher,
+    insistence,
+    contactClient,
+  };
 }
 
 function makeJob(
@@ -851,6 +867,94 @@ describe('WebhookProcessor.process', () => {
           expect.objectContaining({ agentId: 'agent_default' }),
         );
       });
+    });
+  });
+
+  describe('video attachment gate', () => {
+    const itemsWithAttachment: DebouncedMessage[] = [
+      {
+        body: 'mirá esto',
+        replyChannel: 'WhatsApp',
+        locationId: 'loc_abc',
+        requestId: 'req-1',
+        receivedAt: '2026-04-28T00:00:00.000Z',
+        attachments: ['https://cdn.ghl.com/abc.mp4'],
+      },
+    ];
+
+    function setupReply(p: ReturnType<typeof makeProcessor>) {
+      (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({ apiKey: 'k' });
+      (p.forwarder.forward as jest.Mock).mockResolvedValue({
+        messages: [{ type: 'text', content: 'reply' }],
+        durationMs: 1,
+      });
+      (p.ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 1 });
+      (p.insistence.schedule as jest.Mock).mockResolvedValue(undefined);
+    }
+
+    it('drops the whole flush (text included) when an attachment is a video', async () => {
+      const p = makeProcessor();
+      (p.debouncer.drain as jest.Mock).mockResolvedValue(itemsWithAttachment);
+      (p.classifier.containsVideo as jest.Mock).mockResolvedValue(true);
+
+      const result = await p.processor.process(makeJob());
+
+      expect(p.classifier.containsVideo).toHaveBeenCalledWith(
+        ['https://cdn.ghl.com/abc.mp4'],
+        'job-1',
+      );
+      expect(p.groupFetcher.fetch).not.toHaveBeenCalled();
+      expect(p.forwarder.forward).not.toHaveBeenCalled();
+      expect(p.ghl.send).not.toHaveBeenCalled();
+      expect(p.insistence.schedule).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ ok: true, drained: 1, skipped: 'video' });
+    });
+
+    it('continues normally when the attachment is not a video (audio/image)', async () => {
+      const p = makeProcessor();
+      (p.debouncer.drain as jest.Mock).mockResolvedValue(itemsWithAttachment);
+      setupReply(p);
+      (p.classifier.containsVideo as jest.Mock).mockResolvedValue(false);
+
+      const result = await p.processor.process(makeJob());
+
+      expect(p.classifier.containsVideo).toHaveBeenCalled();
+      expect(p.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({ attachments: ['https://cdn.ghl.com/abc.mp4'] }),
+      );
+      expect(p.ghl.send).toHaveBeenCalled();
+      expect(result).not.toHaveProperty('skipped');
+    });
+
+    it('does not probe when there are no attachments', async () => {
+      const p = makeProcessor();
+      (p.debouncer.drain as jest.Mock).mockResolvedValue(sampleItems);
+      setupReply(p);
+
+      await p.processor.process(makeJob());
+
+      expect(p.classifier.containsVideo).not.toHaveBeenCalled();
+      expect(p.forwarder.forward).toHaveBeenCalled();
+    });
+
+    it('does not probe or drop when DROP_INBOUND_VIDEO is disabled', async () => {
+      const p = makeProcessor();
+      const config = {
+        get: (key: string) => (key === 'DROP_INBOUND_VIDEO' ? false : undefined),
+      } as unknown as ConfigService<AppEnv, true>;
+      (p.processor as unknown as { config: ConfigService<AppEnv, true> }).config = config;
+      (p.debouncer.drain as jest.Mock).mockResolvedValue(itemsWithAttachment);
+      setupReply(p);
+      // Even if it were a video, the toggle short-circuits before probing.
+      (p.classifier.containsVideo as jest.Mock).mockResolvedValue(true);
+
+      const result = await p.processor.process(makeJob());
+
+      expect(p.classifier.containsVideo).not.toHaveBeenCalled();
+      expect(p.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({ attachments: ['https://cdn.ghl.com/abc.mp4'] }),
+      );
+      expect(result).not.toHaveProperty('skipped');
     });
   });
 

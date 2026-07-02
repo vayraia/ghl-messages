@@ -15,6 +15,7 @@ import {
   GetContactResult,
 } from './ghl-contact-client';
 import { GhlReply, inferImageMimeType, inferDocumentMimeType, basenameFromUrl } from './ghl-reply';
+import { AttachmentClassifier } from './attachment-classifier';
 import { GroupFetcher } from './group-fetcher';
 import { InsistenceClient } from './insistence-client';
 import { FlushJobData, MessageDebouncer } from './message-debouncer';
@@ -40,7 +41,7 @@ export interface FlushResult {
   chatStatus?: number;
   ghlStatus?: number;
   totalMs: number;
-  skipped?: 'ai_disabled' | 'ai_disabled_tag' | 'no_default_agent' | 'ai_off_hours';
+  skipped?: 'ai_disabled' | 'ai_disabled_tag' | 'no_default_agent' | 'ai_off_hours' | 'video';
 }
 
 /**
@@ -57,6 +58,7 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
     private readonly debouncer: MessageDebouncer,
     private readonly forwarder: WebhookForwarder,
     private readonly ghl: GhlReply,
+    private readonly classifier: AttachmentClassifier,
     private readonly groupFetcher: GroupFetcher,
     private readonly insistence: InsistenceClient,
     private readonly contactClient: GhlContactClient,
@@ -103,6 +105,28 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
     const locationId = job.data.locationId ?? last.locationId;
     const requestId = last.requestId;
     const receivedAt = items[0].receivedAt;
+
+    // Video gate: GHL can't tell us an attachment is a video (audio and video
+    // both arrive as a `.mp4` URL), so we probe the CDN's Content-Type. When a
+    // flush carries any video attachment, drop the whole flush — text included.
+    // Runs before the group/contact fetches so a video-only conversation costs
+    // nothing downstream. Only pays the HEAD when attachments are present.
+    if (
+      attachments.length > 0 &&
+      this.config.get('DROP_INBOUND_VIDEO', { infer: true }) &&
+      (await this.classifier.containsVideo(attachments, String(job.id)))
+    ) {
+      this.logger.log(
+        { jobId: job.id, contactId, drained: items.length, attachments: attachments.length },
+        'Inbound flush dropped — contains video attachment',
+      );
+      return {
+        ok: true,
+        drained: items.length,
+        totalMs: Date.now() - started,
+        skipped: 'video',
+      };
+    }
 
     if (!locationId) {
       this.logger.warn(
