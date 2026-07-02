@@ -29,6 +29,7 @@ export class WebhookInboundController {
   private readonly logger = new Logger(WebhookInboundController.name);
   private readonly idempotencyTtlSeconds: number;
   private readonly logRawInbound: boolean;
+  private readonly maxInboundAgeSeconds: number;
 
   constructor(
     private readonly debouncer: MessageDebouncer,
@@ -37,6 +38,7 @@ export class WebhookInboundController {
   ) {
     this.idempotencyTtlSeconds = config.get('IDEMPOTENCY_TTL_SECONDS', { infer: true });
     this.logRawInbound = config.get('LOG_INBOUND_RAW', { infer: true });
+    this.maxInboundAgeSeconds = config.get('INBOUND_MAX_AGE_SECONDS', { infer: true });
   }
 
   @Post('inbound')
@@ -85,6 +87,28 @@ export class WebhookInboundController {
     // the real content in attachments. Drop only if BOTH are empty.
     if (!text && attachments.length === 0) {
       return { ok: true, skipped: 'empty_body' };
+    }
+
+    // Stale-event guard. During contact syncs GHL replays past messages with
+    // their original `dateAdded` (creation time on GHL's side). A genuine
+    // inbound is seconds old; a sync replay is hours/days/months old. Drop
+    // events older than INBOUND_MAX_AGE_SECONDS so they never reach the AI
+    // flow. Placed before the idempotency SET NX so a stale replay doesn't burn
+    // a dedup key. Fail-open: skip the check when the guard is off (<= 0), when
+    // `dateAdded` is missing/unparseable, or when it is dated in the future
+    // (clock skew) — better to answer a rare stale message than drop a real one.
+    if (this.maxInboundAgeSeconds > 0 && body.dateAdded) {
+      const addedMs = Date.parse(body.dateAdded);
+      if (!Number.isNaN(addedMs)) {
+        const ageSeconds = (Date.now() - addedMs) / 1000;
+        if (ageSeconds > this.maxInboundAgeSeconds) {
+          this.logger.log(
+            { contactId, dateAdded: body.dateAdded, ageSeconds: Math.round(ageSeconds) },
+            'inbound skipped: stale event (likely GHL sync replay)',
+          );
+          return { ok: true, skipped: 'stale' };
+        }
+      }
     }
 
     if (body.messageId) {

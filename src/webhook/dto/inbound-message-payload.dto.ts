@@ -13,8 +13,8 @@ import {
  * GHL's standard webhook subscription, not our custom Workflow forwarder).
  *
  * The validation pipe is configured with `whitelist: true` so unknown fields
- * (`from`, `to`, `webhookId`, `dateAdded`, `appId`, `versionId`, etc.) are
- * silently stripped from the validated instance.
+ * (`from`, `to`, `webhookId`, `appId`, `versionId`, etc.) are silently stripped
+ * from the validated instance. Only fields declared below survive.
  */
 export class InboundMessagePayloadDto {
   @IsOptional()
@@ -90,4 +90,12 @@ export class InboundMessagePayloadDto {
 
   @Allow()
   timestamp?: string;
+
+  // GHL sets this to when the message was created on its side (ISO 8601, e.g.
+  // "2026-03-05T11:12:09.000Z"). Declared so it survives the whitelist and can
+  // be used to detect stale sync replays (see INBOUND_MAX_AGE_SECONDS).
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  dateAdded?: string;
 }

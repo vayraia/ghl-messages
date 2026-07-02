@@ -59,6 +59,13 @@ export interface AppEnv {
   MESSAGE_DEBOUNCE_MS: number;
   IDEMPOTENCY_TTL_SECONDS: number;
 
+  // Stale-event guard for the native inbound webhook. During contact syncs GHL
+  // replays past messages with their original `dateAdded`; a real inbound is
+  // seconds old while a replay is hours/days/months old. When > 0, inbound
+  // events older than this many seconds are dropped before enqueueing. 0
+  // (default) disables the guard entirely. Recommended in prod: 600 (10 min).
+  INBOUND_MAX_AGE_SECONDS: number;
+
   // Debug toggle: when true, POST /webhook/v1/inbound logs the full raw request
   // body (pre-whitelist) at INFO. Verbose + serializes every inbound payload,
   // so keep it off in normal operation and only flip on to capture samples.
@@ -142,6 +149,8 @@ export const envValidationSchema = Joi.object<AppEnv, true>({
 
   MESSAGE_DEBOUNCE_MS: Joi.number().integer().min(0).default(10_000),
   IDEMPOTENCY_TTL_SECONDS: Joi.number().integer().min(1).default(3600),
+
+  INBOUND_MAX_AGE_SECONDS: Joi.number().integer().min(0).default(0),
 
   LOG_INBOUND_RAW: Joi.boolean().default(false),
 

@@ -45,6 +45,11 @@ WEBHOOK_JOB_BACKOFF_MS=2000
 MESSAGE_DEBOUNCE_MS=10000
 # How long an x-idempotency-key is remembered as "already seen".
 IDEMPOTENCY_TTL_SECONDS=3600
+# Stale-event guard: drop native inbound events whose `dateAdded` is older than
+# this many seconds (GHL replays past messages during contact syncs). 0 = off
+# (default). Recommended in prod: 600 (10 min). Fail-open when dateAdded is
+# missing/unparseable/future.
+INBOUND_MAX_AGE_SECONDS=0
 # Debug toggle: log the FULL raw /webhook/v1/inbound payload (pre-whitelist) at
 # INFO. Verbose — flip on only to capture sample payloads, then turn back off.
 LOG_INBOUND_RAW=false
