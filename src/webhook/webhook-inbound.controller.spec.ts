@@ -94,6 +94,73 @@ describe('WebhookInboundController', () => {
     });
   });
 
+  describe('sticker filter', () => {
+    it('drops a sticker-only message (empty body + .webp attachment)', async () => {
+      const { controller, debouncer, redis } = makeController();
+      const r = await controller.inbound(
+        payload({ body: '', attachments: ['https://cdn.ghl.com/s/abc.webp'] }),
+      );
+      expect(r).toEqual({ ok: true, skipped: 'sticker' });
+      expect(debouncer.accept).not.toHaveBeenCalled();
+      // Runs before idempotency, so no dedup key is burned.
+      expect(redis.set).not.toHaveBeenCalled();
+    });
+
+    it('drops a real WhatsApp sticker payload', async () => {
+      const { controller, debouncer } = makeController();
+      const r = await controller.inbound(
+        payload({
+          messageType: 'WhatsApp',
+          messageTypeString: 'TYPE_WHATSAPP',
+          messageTypeId: 19,
+          contentType: 'text/plain',
+          body: '',
+          attachments: [
+            'https://static-assets.internal.usercontent.site/conversations-assets/location/fAnUgQDSzKBFYTEHyvKK/conversations/eG52zepvVavnZEcusgrD/2e829bc0-8d3a-443a-a29d-a7d8d7416572.webp',
+          ],
+        }),
+      );
+      expect(r).toEqual({ ok: true, skipped: 'sticker' });
+      expect(debouncer.accept).not.toHaveBeenCalled();
+    });
+
+    it('drops a .webp with a query string', async () => {
+      const { controller, debouncer } = makeController();
+      const r = await controller.inbound(
+        payload({ body: '', attachments: ['https://cdn.ghl.com/s/abc.webp?token=xyz'] }),
+      );
+      expect(r).toEqual({ ok: true, skipped: 'sticker' });
+      expect(debouncer.accept).not.toHaveBeenCalled();
+    });
+
+    it('does NOT drop a normal image-only message (.jpeg)', async () => {
+      const { controller, debouncer } = makeController();
+      await controller.inbound(
+        payload({ body: '', attachments: ['https://cdn.ghl.com/s/photo.jpeg'] }),
+      );
+      expect(debouncer.accept).toHaveBeenCalled();
+    });
+
+    it('does NOT drop a .webp sent alongside text', async () => {
+      const { controller, debouncer } = makeController();
+      await controller.inbound(
+        payload({ body: 'mira esto', attachments: ['https://cdn.ghl.com/s/abc.webp'] }),
+      );
+      expect(debouncer.accept).toHaveBeenCalled();
+    });
+
+    it('does NOT drop when a .webp is mixed with a non-webp attachment', async () => {
+      const { controller, debouncer } = makeController();
+      await controller.inbound(
+        payload({
+          body: '',
+          attachments: ['https://cdn.ghl.com/s/abc.webp', 'https://cdn.ghl.com/s/photo.jpeg'],
+        }),
+      );
+      expect(debouncer.accept).toHaveBeenCalled();
+    });
+  });
+
   describe('stale-event guard (INBOUND_MAX_AGE_SECONDS)', () => {
     it('drops an event older than the configured max age (GHL sync replay)', async () => {
       const { controller, debouncer, redis } = makeController({ INBOUND_MAX_AGE_SECONDS: 600 });

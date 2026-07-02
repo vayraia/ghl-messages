@@ -89,6 +89,16 @@ export class WebhookInboundController {
       return { ok: true, skipped: 'empty_body' };
     }
 
+    // Stickers are noise for the AI flow — a contact reacting with a sticker
+    // isn't asking anything. WhatsApp delivers them as `.webp` attachments with
+    // no text body (real photos are converted to `.jpeg`), so drop a message
+    // that is sticker-only: empty text AND every attachment is a `.webp`. A
+    // `.webp` sent alongside text, or mixed with a non-webp attachment, is
+    // treated as a real image and processed normally.
+    if (!text && attachments.every(isStickerAttachment)) {
+      return { ok: true, skipped: 'sticker' };
+    }
+
     // Stale-event guard. During contact syncs GHL replays past messages with
     // their original `dateAdded` (creation time on GHL's side). A genuine
     // inbound is seconds old; a sync replay is hours/days/months old. Drop
@@ -147,6 +157,12 @@ export class WebhookInboundController {
 
 function inboundIdempotencyKey(messageId: string): string {
   return `webhook:inbound:idem:${messageId}`;
+}
+
+function isStickerAttachment(url: string): boolean {
+  // Match a `.webp` extension before any query string / fragment
+  // (e.g. https://cdn.ghl.com/abc.webp?token=…).
+  return /\.webp(?:[?#]|$)/i.test(url);
 }
 
 function isCommentMessage(body: InboundMessagePayloadDto): boolean {
