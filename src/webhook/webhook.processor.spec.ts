@@ -446,6 +446,41 @@ describe('WebhookProcessor.process', () => {
       expect(p.forwarder.forward).toHaveBeenCalled();
       expect(p.ghl.send).toHaveBeenCalled();
     });
+
+    it('forwards the contact tags to chat, excluding "desactivar ia"', async () => {
+      const p = makeProcessor();
+      setupHappyPathMocks(p);
+      // The hard-stop only triggers on an exact "desactivar ia"; a contact can
+      // still carry other tags. The forwarded set must drop the control tag if
+      // it were ever present alongside a non-exact variant.
+      (p.contactClient.get as jest.Mock).mockResolvedValue({
+        status: 200,
+        customFields: [],
+        tags: ['paciente_nuevo', 'techo_propio', 'vip'],
+      });
+
+      await p.processor.process(makeJob());
+
+      expect(p.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({ tags: ['paciente_nuevo', 'techo_propio', 'vip'] }),
+      );
+    });
+
+    it('forwards tags=undefined when the contact has no tags', async () => {
+      const p = makeProcessor();
+      setupHappyPathMocks(p);
+      (p.contactClient.get as jest.Mock).mockResolvedValue({
+        status: 200,
+        customFields: [],
+        tags: [],
+      });
+
+      await p.processor.process(makeJob());
+
+      expect(p.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({ tags: undefined }),
+      );
+    });
   });
 
   describe('custom field resolution', () => {

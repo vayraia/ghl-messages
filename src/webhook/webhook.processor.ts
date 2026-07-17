@@ -308,6 +308,11 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
       }
     }
 
+    // Forward the contact's tags to the chat API, excluding the AI-control tag
+    // (a contact carrying `desactivar ia` never reaches here — the hard-stop
+    // above returns early — so the filter is defensive). Omitted when empty.
+    const tags = (contact.tags ?? []).filter((t) => t !== AI_DISABLE_TAG);
+
     const chat = await this.forwarder.forward({
       jobId: String(job.id),
       agentId,
@@ -319,6 +324,7 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
       contactName: contact.firstName,
       contactEmail: contact.email,
       contactPhone: contact.phone,
+      tags: tags.length > 0 ? tags : undefined,
       customFields,
       assignedUser,
       attachments: attachments.length > 0 ? attachments : undefined,

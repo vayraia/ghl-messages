@@ -268,6 +268,41 @@ describe('WebhookForwarder', () => {
     expect(body.contact_data).not.toHaveProperty('assigned_user');
   });
 
+  it('sends the contact tags as contact_data.tags when provided', async () => {
+    const { forwarder, post } = makeForwarder();
+    post.mockResolvedValue({
+      status: 200,
+      data: { messages: [{ type: 'text', content: 'ok' }] },
+    });
+
+    await forwarder.forward({
+      ...baseReq,
+      contactName: 'Juan',
+      tags: ['paciente_nuevo', 'techo_propio', 'vip'],
+    });
+
+    const [, body] = post.mock.calls[0];
+    expect(body.contact_data).toEqual({
+      ghl_token: 'pit-xxx',
+      location_id: 'loc_abc',
+      name: 'Juan',
+      tags: ['paciente_nuevo', 'techo_propio', 'vip'],
+    });
+  });
+
+  it('omits contact_data.tags when the array is empty or absent', async () => {
+    const { forwarder, post } = makeForwarder();
+    post.mockResolvedValue({
+      status: 200,
+      data: { messages: [{ type: 'text', content: 'ok' }] },
+    });
+
+    await forwarder.forward({ ...baseReq, tags: [] });
+
+    const [, body] = post.mock.calls[0];
+    expect(body.contact_data).not.toHaveProperty('tags');
+  });
+
   it('includes attachments in message when provided', async () => {
     const { forwarder, post } = makeForwarder();
     post.mockResolvedValue({

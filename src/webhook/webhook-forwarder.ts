@@ -18,6 +18,7 @@ export interface ChatRequest {
   contactName?: string;
   contactEmail?: string;
   contactPhone?: string;
+  tags?: string[];
   customFields?: NamedCustomField[];
   assignedUser?: AssignedUser;
   attachments?: string[];
@@ -94,6 +95,7 @@ export class WebhookForwarder {
       name?: string;
       email?: string;
       phone?: string;
+      tags?: string[];
       custom_fields?: NamedCustomField[];
       assigned_user?: AssignedUser;
     } = {
@@ -108,6 +110,10 @@ export class WebhookForwarder {
     }
     if (req.contactPhone) {
       contact_data.phone = req.contactPhone;
+    }
+    // The contact's GHL tags (normalized lowercased+trimmed), omitted when empty.
+    if (req.tags && req.tags.length > 0) {
+      contact_data.tags = req.tags;
     }
     if (req.customFields && req.customFields.length > 0) {
       contact_data.custom_fields = req.customFields;

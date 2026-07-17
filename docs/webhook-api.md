@@ -162,6 +162,7 @@ x-request-id: <uuid>
     "name": "Fabio",
     "email": "fabio@example.com",
     "phone": "+51987654321",
+    "tags": ["paciente_nuevo", "techo_propio", "vip"],
     "custom_fields": [
       { "id": "cf_1", "name": "Reprogramar Cita", "value": "https://..." }
     ],
@@ -191,7 +192,7 @@ GHL  ──POST──►  /v1/webhook
                                           ├─ GET  $GHL_API_BASE_URL/contacts/{id}   (firstName + email + phone + custom fields + assignedTo)
                                           ├─ GET  $GHL_API_BASE_URL/users/{assignedTo}   (assigned agent — best-effort, cached)
                                           ├─ POST $CHAT_API_URL/chat
-                                          │     body: { agent_id, contact_id, contact_data: { ghl_token, location_id, name?, email?, phone?, custom_fields?, assigned_user? }, message: { body, type } }
+                                          │     body: { agent_id, contact_id, contact_data: { ghl_token, location_id, name?, email?, phone?, tags?, custom_fields?, assigned_user? }, message: { body, type } }
                                           │     → expects { messages: [...] }
                                           └─ POST $GHL_API_BASE_URL/conversations/messages
                                                 Authorization: Bearer $GHL_API_KEY
@@ -213,6 +214,7 @@ The forwarder POSTs:
     "name": "Fabio",
     "email": "fabio@example.com",
     "phone": "+51987654321",
+    "tags": ["paciente_nuevo", "techo_propio", "vip"],
     "custom_fields": [
       { "id": "cf_1", "name": "Reprogramar Cita", "value": "https://..." }
     ],
@@ -256,6 +258,12 @@ top-level / `customData.agent_id` and are not affected by this override.
 and phone from the same `GET $GHL_API_BASE_URL/contacts/{id}`. Each is
 included only when present and non-blank — otherwise omitted from
 `contact_data`.
+
+`contact_data.tags` is the contact's GHL tags, read off the same
+`GET $GHL_API_BASE_URL/contacts/{id}` and normalized to lowercased+trimmed
+strings. The AI-control tag `desactivar ia` is excluded (a contact carrying it
+hard-stops the flow before the forward, so it never reaches the chat API). When
+the contact has no other tags, `tags` is omitted entirely from `contact_data`.
 
 `contact_data.custom_fields` is an array of the contact's custom fields,
 each entry carrying `{ id, name, value }`. The `id` is GHL's custom-field
