@@ -94,6 +94,9 @@ export class MessageDebouncer {
     contactName?: string;
     attachments?: string[];
     requestId: string | undefined;
+    // Per-call debounce window (ms) overriding the global MESSAGE_DEBOUNCE_MS.
+    // Used for the per-group inbound debounce; undefined keeps the default.
+    delayOverride?: number;
   }): Promise<AcceptResult> {
     const listKey = listKeyFor(input.debounceKey, input.contactId);
     const flushKey = flushKeyFor(input.debounceKey, input.contactId);
@@ -140,6 +143,11 @@ export class MessageDebouncer {
     const safeDebounceKey = input.debounceKey.replace(/:/g, '_');
     const newJobId = `flush_${safeDebounceKey}_${input.contactId}_${Date.now()}-${randomUUID().slice(0, 8)}`;
 
+    const delay =
+      typeof input.delayOverride === 'number' && input.delayOverride >= 0
+        ? input.delayOverride
+        : this.debounceMs;
+
     await this.queue.add(
       WEBHOOK_FLUSH_JOB,
       {
@@ -151,7 +159,7 @@ export class MessageDebouncer {
       },
       {
         jobId: newJobId,
-        delay: this.debounceMs,
+        delay,
         attempts: this.attempts,
         backoff: { type: 'exponential', delay: this.backoffMs },
         removeOnComplete: true,

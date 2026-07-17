@@ -45,6 +45,13 @@ export interface AppEnv {
   CHAT_API_URL: string;
   CHAT_API_TIMEOUT_MS: number;
 
+  // In-memory TTL (ms) for cached per-location group settings. The inbound
+  // controller reads the group's debounce on every message, so caching avoids a
+  // CHAT_API round-trip per message during a burst (and the flush worker reuses
+  // the same cache). Trade-off: a settings change can take up to this long to
+  // propagate. 0 disables caching (fetch is always live).
+  GROUP_CACHE_TTL_MS: number;
+
   JOBS_URL: string;
   JOBS_API_TIMEOUT_MS: number;
 
@@ -145,6 +152,7 @@ export const envValidationSchema = Joi.object<AppEnv, true>({
     .uri({ scheme: ['http', 'https'] })
     .required(),
   CHAT_API_TIMEOUT_MS: Joi.number().integer().min(100).default(15_000),
+  GROUP_CACHE_TTL_MS: Joi.number().integer().min(0).default(60_000),
 
   JOBS_URL: Joi.string()
     .uri({ scheme: ['http', 'https'] })

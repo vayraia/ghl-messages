@@ -59,6 +59,11 @@ LOG_INBOUND_RAW=false
 # JSON response { "message": "<reply>" }.
 CHAT_API_URL=https://your-chat-api.example.com
 CHAT_API_TIMEOUT_MS=15000
+# In-memory TTL (ms) for cached per-location group settings. The inbound
+# controller reads the group's debounce on every message; caching avoids a
+# CHAT_API round-trip per message during a burst. A settings change takes up to
+# this long to propagate. 0 = disable caching (always fetch live).
+GROUP_CACHE_TTL_MS=60000
 
 # --- GHL outbound ---
 GHL_API_KEY=replace-with-your-ghl-pat

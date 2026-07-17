@@ -33,6 +33,9 @@ export interface GroupSettings {
   nonBlockingUsers?: NonBlockingUser[];
   whatsappNumberId?: string;
   aiSchedule?: AiSchedule;
+  // Per-group inbound debounce window (ms). Overrides MESSAGE_DEBOUNCE_MS when
+  // present; undefined falls back to the global default.
+  debounceMs?: number;
 }
 
 interface GroupResponse {
@@ -46,6 +49,7 @@ interface GroupResponse {
     non_blocking_users?: unknown;
     whatsapp_number_id?: unknown;
     ai_schedule?: unknown;
+    debounce_ms?: unknown;
     [key: string]: unknown;
   };
   [key: string]: unknown;
@@ -66,10 +70,13 @@ interface GroupResponse {
 export class GroupFetcher {
   private readonly logger = new Logger(GroupFetcher.name);
   private readonly client: AxiosInstance;
+  private readonly cacheTtlMs: number;
+  private readonly cache = new Map<string, { value: GroupSettings; expiresAt: number }>();
 
   constructor(config: ConfigService<AppEnv, true>) {
     const baseURL: string = config.get('CHAT_API_URL', { infer: true });
     const timeout: number = config.get('CHAT_API_TIMEOUT_MS', { infer: true });
+    this.cacheTtlMs = config.get('GROUP_CACHE_TTL_MS', { infer: true });
 
     this.client = axios.create({
       baseURL,
@@ -81,6 +88,13 @@ export class GroupFetcher {
   }
 
   async fetch(locationId: string, jobId: string): Promise<GroupSettings> {
+    if (this.cacheTtlMs > 0) {
+      const cached = this.cache.get(locationId);
+      if (cached && cached.expiresAt > Date.now()) {
+        return cached.value;
+      }
+    }
+
     const path = `/groups/by-location/${encodeURIComponent(locationId)}`;
     let response;
     try {
@@ -118,7 +132,7 @@ export class GroupFetcher {
           `Group for location ${locationId} has no api_key`,
         );
       }
-      return {
+      const settings: GroupSettings = {
         apiKey,
         insistences: body.general_settings?.insistences,
         insistenceSchedule: parseInsistenceSchedule(body.general_settings?.insistence_schedule),
@@ -128,7 +142,15 @@ export class GroupFetcher {
         nonBlockingUsers: parseNonBlockingUsers(body.general_settings?.non_blocking_users),
         whatsappNumberId: parseWhatsappNumberId(body.general_settings?.whatsapp_number_id),
         aiSchedule: parseAiSchedule(body.general_settings?.ai_schedule),
+        debounceMs: parseDebounceMs(body.general_settings?.debounce_ms),
       };
+      if (this.cacheTtlMs > 0) {
+        this.cache.set(locationId, {
+          value: settings,
+          expiresAt: Date.now() + this.cacheTtlMs,
+        });
+      }
+      return settings;
     }
 
     const summary = summarizeBody(response.data);
@@ -153,6 +175,16 @@ function parseDefaultAgent(raw: unknown): string | undefined {
   if (typeof raw !== 'string') return undefined;
   const trimmed = raw.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+// Per-group inbound debounce window in ms. Accepts a number or a numeric
+// string; anything else, non-finite, or negative falls back to undefined (the
+// global MESSAGE_DEBOUNCE_MS default). No upper bound is enforced.
+function parseDebounceMs(raw: unknown): number | undefined {
+  const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : NaN;
+  if (!Number.isFinite(n)) return undefined;
+  const int = Math.trunc(n);
+  return int >= 0 ? int : undefined;
 }
 
 function parseWhatsappNumberId(raw: unknown): string | undefined {

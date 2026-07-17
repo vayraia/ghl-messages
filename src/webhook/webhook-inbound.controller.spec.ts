@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { AppEnv } from '../config/env.validation';
 import { InboundMessagePayloadDto } from './dto/inbound-message-payload.dto';
+import { GroupFetcher, GroupSettings } from './group-fetcher';
 import { MessageDebouncer } from './message-debouncer';
 import { WebhookInboundController } from './webhook-inbound.controller';
 
@@ -8,18 +9,27 @@ interface RedisMock {
   set: jest.Mock;
 }
 
-function makeController(over: Partial<Record<keyof AppEnv, number>> = {}) {
+function makeController(
+  over: Partial<Record<keyof AppEnv, number>> = {},
+  group: Partial<GroupSettings> | Error = {},
+) {
   const debouncer = {
     accept: jest.fn().mockResolvedValue({ jobId: 'j_1', pendingCount: 1 }),
   } as unknown as jest.Mocked<MessageDebouncer>;
+  const groupFetcher = {
+    fetch:
+      group instanceof Error
+        ? jest.fn().mockRejectedValue(group)
+        : jest.fn().mockResolvedValue({ apiKey: 'k', ...group } as GroupSettings),
+  } as unknown as jest.Mocked<GroupFetcher>;
   const redis: RedisMock = { set: jest.fn().mockResolvedValue('OK') };
   const env: Record<string, number> = { IDEMPOTENCY_TTL_SECONDS: 3600, ...over };
   const config = {
     get: (k: keyof AppEnv) => env[k as string],
   } as unknown as ConfigService<AppEnv, true>;
 
-  const controller = new WebhookInboundController(debouncer, redis as never, config);
-  return { controller, debouncer, redis };
+  const controller = new WebhookInboundController(debouncer, groupFetcher, redis as never, config);
+  return { controller, debouncer, groupFetcher, redis };
 }
 
 function payload(over: Partial<InboundMessagePayloadDto> = {}): InboundMessagePayloadDto {
@@ -41,6 +51,33 @@ describe('WebhookInboundController', () => {
     const r = await controller.inbound(payload());
     expect(r).toEqual({ ok: true, jobId: 'j_1', debounced: false });
     expect(debouncer.accept).toHaveBeenCalled();
+  });
+
+  describe('per-group debounce override', () => {
+    it('forwards the group debounceMs as delayOverride', async () => {
+      const { controller, debouncer } = makeController({}, { debounceMs: 25_000 });
+      await controller.inbound(payload());
+      expect(debouncer.accept).toHaveBeenCalledWith(
+        expect.objectContaining({ delayOverride: 25_000 }),
+      );
+    });
+
+    it('passes undefined delayOverride when the group has no debounce set', async () => {
+      const { controller, debouncer } = makeController({}, {});
+      await controller.inbound(payload());
+      expect(debouncer.accept).toHaveBeenCalledWith(
+        expect.objectContaining({ delayOverride: undefined }),
+      );
+    });
+
+    it('fail-open: still enqueues (undefined override) when the group fetch throws', async () => {
+      const { controller, debouncer } = makeController({}, new Error('chat api down'));
+      const r = await controller.inbound(payload());
+      expect(r).toEqual({ ok: true, jobId: 'j_1', debounced: false });
+      expect(debouncer.accept).toHaveBeenCalledWith(
+        expect.objectContaining({ delayOverride: undefined }),
+      );
+    });
   });
 
   describe('comment filter', () => {

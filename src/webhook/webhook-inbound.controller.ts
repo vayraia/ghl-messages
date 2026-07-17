@@ -5,6 +5,7 @@ import { Redis } from 'ioredis';
 import { AppEnv } from '../config/env.validation';
 import { resolveInboundChannel } from './channel-resolver';
 import { InboundMessagePayloadDto } from './dto/inbound-message-payload.dto';
+import { GroupFetcher } from './group-fetcher';
 import { MessageDebouncer } from './message-debouncer';
 import { WEBHOOK_REDIS_CLIENT } from './webhook.tokens';
 
@@ -33,6 +34,7 @@ export class WebhookInboundController {
 
   constructor(
     private readonly debouncer: MessageDebouncer,
+    private readonly groupFetcher: GroupFetcher,
     @Inject(WEBHOOK_REDIS_CLIENT) private readonly redis: Redis,
     config: ConfigService<AppEnv, true>,
   ) {
@@ -136,6 +138,22 @@ export class WebhookInboundController {
 
     const replyChannel = resolveInboundChannel(body);
 
+    // Per-group debounce override. The group is fetched (and cached by
+    // GroupFetcher) here so a burst of messages shares one CHAT_API round-trip
+    // and the flush worker reuses the same cache. Fail-open: any fetch error
+    // falls back to the global MESSAGE_DEBOUNCE_MS — the flush will re-fetch and
+    // surface a real config error there, so we don't fail the webhook here.
+    let delayOverride: number | undefined;
+    try {
+      const group = await this.groupFetcher.fetch(locationId, body.messageId ?? 'inbound');
+      delayOverride = group.debounceMs;
+    } catch (err) {
+      this.logger.debug(
+        { locationId, msg: (err as Error).message },
+        'group fetch for debounce override failed — using default',
+      );
+    }
+
     const result = await this.debouncer.accept({
       debounceKey: `loc:${locationId}`,
       source: 'inbound',
@@ -145,6 +163,7 @@ export class WebhookInboundController {
       replyChannel,
       attachments: attachments.length > 0 ? attachments : undefined,
       requestId: body.messageId,
+      delayOverride,
     });
 
     return {

@@ -8,13 +8,14 @@ jest.mock('axios');
 
 const mockedAxios = axios as jest.Mocked<typeof axios>;
 
-function makeFetcher() {
+function makeFetcher(over: Record<string, string | number> = {}) {
   const get = jest.fn();
   mockedAxios.create.mockReturnValue({ get } as unknown as ReturnType<typeof axios.create>);
 
   const env: Record<string, string | number> = {
     CHAT_API_URL: 'https://chat.example.com',
     CHAT_API_TIMEOUT_MS: 5000,
+    ...over,
   };
   const config = {
     get: (key: string) => env[key],
@@ -441,6 +442,105 @@ describe('GroupFetcher', () => {
       data: { api_key: 'sk', general_settings: { whatsapp_number_id: 42 } },
     });
     expect((await fetcher.fetch('loc_abc', 'job-1')).whatsappNumberId).toBeUndefined();
+  });
+
+  describe('debounce_ms', () => {
+    it('parses a numeric debounce_ms', async () => {
+      const { fetcher, get } = makeFetcher();
+      get.mockResolvedValue({
+        status: 200,
+        data: { api_key: 'sk', general_settings: { debounce_ms: 25000 } },
+      });
+
+      expect((await fetcher.fetch('loc_abc', 'job-1')).debounceMs).toBe(25000);
+    });
+
+    it('parses a numeric-string debounce_ms and truncates to an integer', async () => {
+      const { fetcher, get } = makeFetcher();
+      get.mockResolvedValue({
+        status: 200,
+        data: { api_key: 'sk', general_settings: { debounce_ms: '15000.7' } },
+      });
+
+      expect((await fetcher.fetch('loc_abc', 'job-1')).debounceMs).toBe(15000);
+    });
+
+    it('accepts 0 (immediate flush)', async () => {
+      const { fetcher, get } = makeFetcher();
+      get.mockResolvedValue({
+        status: 200,
+        data: { api_key: 'sk', general_settings: { debounce_ms: 0 } },
+      });
+
+      expect((await fetcher.fetch('loc_abc', 'job-1')).debounceMs).toBe(0);
+    });
+
+    it('returns debounceMs=undefined when missing, negative, or non-numeric', async () => {
+      const { fetcher, get } = makeFetcher();
+
+      get.mockResolvedValue({ status: 200, data: { api_key: 'sk', general_settings: {} } });
+      expect((await fetcher.fetch('loc_abc', 'job-1')).debounceMs).toBeUndefined();
+
+      get.mockResolvedValue({
+        status: 200,
+        data: { api_key: 'sk', general_settings: { debounce_ms: -5 } },
+      });
+      expect((await fetcher.fetch('loc_abc', 'job-1')).debounceMs).toBeUndefined();
+
+      get.mockResolvedValue({
+        status: 200,
+        data: { api_key: 'sk', general_settings: { debounce_ms: 'soon' } },
+      });
+      expect((await fetcher.fetch('loc_abc', 'job-1')).debounceMs).toBeUndefined();
+    });
+  });
+
+  describe('in-memory cache (GROUP_CACHE_TTL_MS)', () => {
+    it('serves a second fetch from cache without a new HTTP call', async () => {
+      const { fetcher, get } = makeFetcher({ GROUP_CACHE_TTL_MS: 60_000 });
+      get.mockResolvedValue({
+        status: 200,
+        data: { api_key: 'sk', general_settings: { debounce_ms: 8000 } },
+      });
+
+      const first = await fetcher.fetch('loc_abc', 'job-1');
+      const second = await fetcher.fetch('loc_abc', 'job-2');
+
+      expect(get).toHaveBeenCalledTimes(1);
+      expect(second).toEqual(first);
+    });
+
+    it('caches per locationId (a different location triggers its own fetch)', async () => {
+      const { fetcher, get } = makeFetcher({ GROUP_CACHE_TTL_MS: 60_000 });
+      get.mockResolvedValue({ status: 200, data: { api_key: 'sk' } });
+
+      await fetcher.fetch('loc_a', 'job-1');
+      await fetcher.fetch('loc_b', 'job-2');
+
+      expect(get).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not cache when TTL is 0 (each fetch is live)', async () => {
+      const { fetcher, get } = makeFetcher({ GROUP_CACHE_TTL_MS: 0 });
+      get.mockResolvedValue({ status: 200, data: { api_key: 'sk' } });
+
+      await fetcher.fetch('loc_abc', 'job-1');
+      await fetcher.fetch('loc_abc', 'job-2');
+
+      expect(get).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not cache a failed fetch', async () => {
+      const { fetcher, get } = makeFetcher({ GROUP_CACHE_TTL_MS: 60_000 });
+      get.mockResolvedValueOnce({ status: 503, data: 'down' });
+      get.mockResolvedValueOnce({ status: 200, data: { api_key: 'sk' } });
+
+      await fetcher.fetch('loc_abc', 'job-1').catch(() => undefined);
+      const ok = await fetcher.fetch('loc_abc', 'job-2');
+
+      expect(get).toHaveBeenCalledTimes(2);
+      expect(ok.apiKey).toBe('sk');
+    });
   });
 
   it('throws UnrecoverableError when 2xx response has no api_key', async () => {

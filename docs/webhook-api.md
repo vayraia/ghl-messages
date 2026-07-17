@@ -139,6 +139,13 @@ curl -X POST http://localhost:3000/v1/webhook \
 `MESSAGE_DEBOUNCE_MS` (default `10000`) milliseconds after the **last**
 arrival, the worker fires a single forward:
 
+> **Per-group override.** For the native inbound webhook, the debounce window
+> can be set per location via `general_settings.debounce_ms` on the group. When
+> present (a non-negative integer, in ms) it overrides `MESSAGE_DEBOUNCE_MS` for
+> that location only; when absent the global default applies. The inbound
+> controller reads it through `GroupFetcher` (cached for `GROUP_CACHE_TTL_MS`, so
+> a burst shares one CHAT_API round-trip) and passes it as the flush delay.
+
 ```http
 POST $CHAT_API_URL/chat
 content-type: application/json
