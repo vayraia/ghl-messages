@@ -45,6 +45,12 @@ export interface AppEnv {
   CHAT_API_URL: string;
   CHAT_API_TIMEOUT_MS: number;
 
+  // Shared secret the chat API requires to expose per-group secrets (the
+  // group's `api_key`). When set, it is sent as the `X-Group-Secrets-Key`
+  // header on GET /groups/by-location/{id}. Optional: when unset (or blank),
+  // the request goes out without the header, as before.
+  GROUP_SECRETS_API_KEY?: string;
+
   // In-memory TTL (ms) for cached per-location group settings. The inbound
   // controller reads the group's debounce on every message, so caching avoids a
   // CHAT_API round-trip per message during a burst (and the flush worker reuses
@@ -152,6 +158,9 @@ export const envValidationSchema = Joi.object<AppEnv, true>({
     .uri({ scheme: ['http', 'https'] })
     .required(),
   CHAT_API_TIMEOUT_MS: Joi.number().integer().min(100).default(15_000),
+  // Optional — allowed to be empty so an unused placeholder in .env behaves
+  // exactly like an absent var (no header sent).
+  GROUP_SECRETS_API_KEY: Joi.string().allow('').optional(),
   GROUP_CACHE_TTL_MS: Joi.number().integer().min(0).default(60_000),
 
   JOBS_URL: Joi.string()

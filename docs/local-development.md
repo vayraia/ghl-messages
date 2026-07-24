@@ -59,6 +59,10 @@ LOG_INBOUND_RAW=false
 # JSON response { "message": "<reply>" }.
 CHAT_API_URL=https://your-chat-api.example.com
 CHAT_API_TIMEOUT_MS=15000
+# Shared secret required by the chat API to return the group's `api_key` on
+# GET /groups/by-location/{id}. Sent as the X-Group-Secrets-Key header.
+# Leave unset/blank to send the request without the header.
+GROUP_SECRETS_API_KEY=
 # In-memory TTL (ms) for cached per-location group settings. The inbound
 # controller reads the group's debounce on every message; caching avoids a
 # CHAT_API round-trip per message during a burst. A settings change takes up to

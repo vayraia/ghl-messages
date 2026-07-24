@@ -58,6 +58,11 @@ interface GroupResponse {
 /**
  * Fetches the per-location group settings from `CHAT_API_URL/groups/by-location/{id}`.
  *
+ * When `GROUP_SECRETS_API_KEY` is set, it is sent as the `X-Group-Secrets-Key`
+ * header — the chat API gates the group's `api_key` behind that shared secret.
+ * When it is unset or blank the header is omitted (the endpoint then answers
+ * without secrets, which surfaces here as the "2xx without api_key" case).
+ *
  * The returned `apiKey` is load-bearing: it authenticates the GHL reply
  * to the contact and the follow-up POST to `JOBS_URL/insistence`. So this
  * call uses the same retry contract as the other downstream services:
@@ -77,11 +82,15 @@ export class GroupFetcher {
     const baseURL: string = config.get('CHAT_API_URL', { infer: true });
     const timeout: number = config.get('CHAT_API_TIMEOUT_MS', { infer: true });
     this.cacheTtlMs = config.get('GROUP_CACHE_TTL_MS', { infer: true });
+    const secretsKey = config.get('GROUP_SECRETS_API_KEY', { infer: true })?.trim();
 
     this.client = axios.create({
       baseURL,
       timeout,
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        ...(secretsKey ? { 'X-Group-Secrets-Key': secretsKey } : {}),
+      },
       validateStatus: () => true,
       maxRedirects: 0,
     });

@@ -39,6 +39,28 @@ describe('GroupFetcher', () => {
     );
   });
 
+  it('sends X-Group-Secrets-Key when GROUP_SECRETS_API_KEY is set', () => {
+    makeFetcher({ GROUP_SECRETS_API_KEY: '  gs_secret  ' });
+    expect(mockedAxios.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        headers: { 'content-type': 'application/json', 'X-Group-Secrets-Key': 'gs_secret' },
+      }),
+    );
+  });
+
+  it('omits X-Group-Secrets-Key when GROUP_SECRETS_API_KEY is unset or blank', () => {
+    makeFetcher();
+    expect(mockedAxios.create).toHaveBeenCalledWith(
+      expect.objectContaining({ headers: { 'content-type': 'application/json' } }),
+    );
+
+    jest.clearAllMocks();
+    makeFetcher({ GROUP_SECRETS_API_KEY: '   ' });
+    expect(mockedAxios.create).toHaveBeenCalledWith(
+      expect.objectContaining({ headers: { 'content-type': 'application/json' } }),
+    );
+  });
+
   it('GETs /groups/by-location/{id} and returns apiKey + insistences', async () => {
     const { fetcher, get } = makeFetcher();
     get.mockResolvedValue({
