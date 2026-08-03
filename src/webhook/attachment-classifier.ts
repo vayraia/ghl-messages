@@ -35,15 +35,23 @@ export class AttachmentClassifier {
   }
 
   /**
-   * Resolves to true if ANY of the given URLs is a positively-confirmed video.
+   * Splits the given URLs into positively-confirmed videos and the rest.
    * URLs are probed concurrently. On any error/ambiguity a URL counts as "not
-   * video" (fail-open).
+   * video" (fail-open) and lands in `keptUrls`.
    */
-  async containsVideo(urls: string[], jobId: string): Promise<boolean> {
-    if (urls.length === 0) return false;
+  async partitionVideos(
+    urls: string[],
+    jobId: string,
+  ): Promise<{ videoUrls: string[]; keptUrls: string[] }> {
+    if (urls.length === 0) return { videoUrls: [], keptUrls: [] };
 
-    const results = await Promise.all(urls.map((url) => this.isVideo(url, jobId)));
-    return results.some(Boolean);
+    const flags = await Promise.all(urls.map((url) => this.isVideo(url, jobId)));
+    const videoUrls: string[] = [];
+    const keptUrls: string[] = [];
+    urls.forEach((url, i) => {
+      (flags[i] ? videoUrls : keptUrls).push(url);
+    });
+    return { videoUrls, keptUrls };
   }
 
   private async isVideo(url: string, jobId: string): Promise<boolean> {

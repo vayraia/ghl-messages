@@ -89,11 +89,63 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
     const { debounceKey, contactId, source } = job.data;
     const started = Date.now();
 
-    const items = await this.debouncer.drain(debounceKey, contactId);
+    let items = await this.debouncer.drain(debounceKey, contactId);
+    const drainedCount = items.length;
     if (items.length === 0) {
       // Could happen if a more recent flush job already drained the list.
       this.logger.debug({ jobId: job.id, debounceKey, contactId }, 'Flush ran with empty list');
       return { ok: true, drained: 0 };
+    }
+
+    // Video gate: GHL can't tell us an attachment is a video (audio and video
+    // both arrive as a `.mp4` URL), so we probe the CDN's Content-Type on
+    // every attachment in the batch. Filtering runs per item, not per batch:
+    //   - an item whose ONLY attachment(s) are confirmed video is dropped
+    //     entirely (text included) — a plain video message carries an empty
+    //     body, and a video sent with a text caption is treated the same way.
+    //   - an item that also carries a non-video attachment (e.g. a video sent
+    //     alongside an image) keeps the item — only the video URL is
+    //     stripped — since there's other real content to forward.
+    // Runs before the group/contact fetches so a video-only conversation
+    // costs nothing downstream. Only pays the HEAD when attachments exist.
+    const allAttachments = items.flatMap((i) => i.attachments ?? []);
+    if (allAttachments.length > 0 && this.config.get('DROP_INBOUND_VIDEO', { infer: true })) {
+      const { videoUrls } = await this.classifier.partitionVideos(allAttachments, String(job.id));
+      if (videoUrls.length > 0) {
+        const videoUrlSet = new Set(videoUrls);
+        const survivingItems: typeof items = [];
+        let droppedItems = 0;
+        for (const item of items) {
+          const itemAttachments = item.attachments ?? [];
+          const nonVideoAttachments = itemAttachments.filter((url) => !videoUrlSet.has(url));
+          if (nonVideoAttachments.length === itemAttachments.length) {
+            survivingItems.push(item); // No video on this item — unaffected.
+          } else if (nonVideoAttachments.length > 0) {
+            survivingItems.push({ ...item, attachments: nonVideoAttachments });
+          } else {
+            droppedItems++; // Item's only attachment(s) were video — drop it entirely.
+          }
+        }
+
+        this.logger.log(
+          { jobId: job.id, contactId, droppedItems, survivingItems: survivingItems.length },
+          'Dropped video-only item(s) from inbound flush',
+        );
+
+        if (survivingItems.length === 0) {
+          this.logger.log(
+            { jobId: job.id, contactId, drained: drainedCount },
+            'Inbound flush dropped — every item was video-only',
+          );
+          return {
+            ok: true,
+            drained: drainedCount,
+            totalMs: Date.now() - started,
+            skipped: 'video',
+          };
+        }
+        items = survivingItems;
+      }
     }
 
     const concatenated = items.map((i) => i.body).join('\n');
@@ -105,28 +157,6 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
     const locationId = job.data.locationId ?? last.locationId;
     const requestId = last.requestId;
     const receivedAt = items[0].receivedAt;
-
-    // Video gate: GHL can't tell us an attachment is a video (audio and video
-    // both arrive as a `.mp4` URL), so we probe the CDN's Content-Type. When a
-    // flush carries any video attachment, drop the whole flush — text included.
-    // Runs before the group/contact fetches so a video-only conversation costs
-    // nothing downstream. Only pays the HEAD when attachments are present.
-    if (
-      attachments.length > 0 &&
-      this.config.get('DROP_INBOUND_VIDEO', { infer: true }) &&
-      (await this.classifier.containsVideo(attachments, String(job.id)))
-    ) {
-      this.logger.log(
-        { jobId: job.id, contactId, drained: items.length, attachments: attachments.length },
-        'Inbound flush dropped — contains video attachment',
-      );
-      return {
-        ok: true,
-        drained: items.length,
-        totalMs: Date.now() - started,
-        skipped: 'video',
-      };
-    }
 
     if (!locationId) {
       this.logger.warn(
@@ -156,7 +186,7 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
       );
       return {
         ok: true,
-        drained: items.length,
+        drained: drainedCount,
         totalMs: Date.now() - started,
         skipped: 'ai_off_hours',
       };
@@ -177,12 +207,12 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
     // trimmed) by the contact client; `?? []` tolerates a partial contact.
     if ((contact.tags ?? []).includes(AI_DISABLE_TAG)) {
       this.logger.log(
-        { jobId: job.id, contactId, locationId, tag: AI_DISABLE_TAG, drained: items.length },
+        { jobId: job.id, contactId, locationId, tag: AI_DISABLE_TAG, drained: drainedCount },
         'Flow skipped — contact has "desactivar ia" tag',
       );
       return {
         ok: true,
-        drained: items.length,
+        drained: drainedCount,
         totalMs: Date.now() - started,
         skipped: 'ai_disabled_tag',
       };
@@ -212,7 +242,7 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
         );
         return {
           ok: true,
-          drained: items.length,
+          drained: drainedCount,
           totalMs: Date.now() - started,
           skipped: 'no_default_agent',
         };
@@ -238,7 +268,7 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
         contactId,
         source,
         attempt: job.attemptsMade + 1,
-        drained: items.length,
+        drained: drainedCount,
         replyChannel,
       },
       'Flushing debounced messages',
@@ -259,7 +289,7 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
         );
         return {
           ok: true,
-          drained: items.length,
+          drained: drainedCount,
           totalMs: Date.now() - started,
           skipped: 'ai_disabled',
         };
@@ -439,7 +469,7 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
 
     return {
       ok: true,
-      drained: items.length,
+      drained: drainedCount,
       chatStatus: 200,
       ghlStatus: lastStatus,
       totalMs: Date.now() - started,

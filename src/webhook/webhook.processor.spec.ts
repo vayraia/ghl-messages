@@ -16,7 +16,9 @@ function makeProcessor() {
   const forwarder = { forward: jest.fn() } as unknown as WebhookForwarder;
   const ghl = { send: jest.fn() } as unknown as GhlReply;
   const classifier = {
-    containsVideo: jest.fn().mockResolvedValue(false),
+    partitionVideos: jest
+      .fn()
+      .mockImplementation((urls: string[]) => Promise.resolve({ videoUrls: [], keptUrls: urls })),
   } as unknown as AttachmentClassifier;
   const groupFetcher = { fetch: jest.fn() } as unknown as GroupFetcher;
   const insistence = {
@@ -906,7 +908,10 @@ describe('WebhookProcessor.process', () => {
   });
 
   describe('video attachment gate', () => {
-    const itemsWithAttachment: DebouncedMessage[] = [
+    // Item whose ONLY attachment is a video, but with a text body alongside
+    // it in the SAME item — per-item granularity treats this as a video
+    // message and drops the whole item, text included.
+    const itemVideoPlusTextSameItem: DebouncedMessage[] = [
       {
         body: 'mirá esto',
         replyChannel: 'WhatsApp',
@@ -914,6 +919,50 @@ describe('WebhookProcessor.process', () => {
         requestId: 'req-1',
         receivedAt: '2026-04-28T00:00:00.000Z',
         attachments: ['https://cdn.ghl.com/abc.mp4'],
+      },
+    ];
+
+    const videoOnlyItems: DebouncedMessage[] = [
+      {
+        body: '',
+        replyChannel: 'WhatsApp',
+        locationId: 'loc_abc',
+        requestId: 'req-1',
+        receivedAt: '2026-04-28T00:00:00.000Z',
+        attachments: ['https://cdn.ghl.com/abc.mp4'],
+      },
+    ];
+
+    // Video-only item merged (by the debouncer) with a separate text-only
+    // item — the video item is dropped, the text item survives on its own.
+    const videoThenSeparateTextItems: DebouncedMessage[] = [
+      {
+        body: '',
+        replyChannel: 'WhatsApp',
+        locationId: 'loc_abc',
+        requestId: 'req-1',
+        receivedAt: '2026-04-28T00:00:00.000Z',
+        attachments: ['https://cdn.ghl.com/abc.mp4'],
+      },
+      {
+        body: 'Hola quiero información',
+        replyChannel: 'WhatsApp',
+        locationId: 'loc_abc',
+        requestId: 'req-2',
+        receivedAt: '2026-04-28T00:00:01.000Z',
+      },
+    ];
+
+    // Item with a video AND a non-video attachment (e.g. an image) — the
+    // video is stripped but the item (text + image) survives.
+    const itemVideoPlusImage: DebouncedMessage[] = [
+      {
+        body: 'mirá esto',
+        replyChannel: 'WhatsApp',
+        locationId: 'loc_abc',
+        requestId: 'req-1',
+        receivedAt: '2026-04-28T00:00:00.000Z',
+        attachments: ['https://cdn.ghl.com/abc.mp4', 'https://cdn.ghl.com/img.jpg'],
       },
     ];
 
@@ -927,14 +976,17 @@ describe('WebhookProcessor.process', () => {
       (p.insistence.schedule as jest.Mock).mockResolvedValue(undefined);
     }
 
-    it('drops the whole flush (text included) when an attachment is a video', async () => {
+    it('drops the flush when it is video-only (no text left to forward)', async () => {
       const p = makeProcessor();
-      (p.debouncer.drain as jest.Mock).mockResolvedValue(itemsWithAttachment);
-      (p.classifier.containsVideo as jest.Mock).mockResolvedValue(true);
+      (p.debouncer.drain as jest.Mock).mockResolvedValue(videoOnlyItems);
+      (p.classifier.partitionVideos as jest.Mock).mockResolvedValue({
+        videoUrls: ['https://cdn.ghl.com/abc.mp4'],
+        keptUrls: [],
+      });
 
       const result = await p.processor.process(makeJob());
 
-      expect(p.classifier.containsVideo).toHaveBeenCalledWith(
+      expect(p.classifier.partitionVideos).toHaveBeenCalledWith(
         ['https://cdn.ghl.com/abc.mp4'],
         'job-1',
       );
@@ -945,15 +997,85 @@ describe('WebhookProcessor.process', () => {
       expect(result).toMatchObject({ ok: true, drained: 1, skipped: 'video' });
     });
 
-    it('continues normally when the attachment is not a video (audio/image)', async () => {
+    it('drops the whole item (text included) when its only attachment is a video', async () => {
       const p = makeProcessor();
-      (p.debouncer.drain as jest.Mock).mockResolvedValue(itemsWithAttachment);
-      setupReply(p);
-      (p.classifier.containsVideo as jest.Mock).mockResolvedValue(false);
+      (p.debouncer.drain as jest.Mock).mockResolvedValue(itemVideoPlusTextSameItem);
+      (p.classifier.partitionVideos as jest.Mock).mockResolvedValue({
+        videoUrls: ['https://cdn.ghl.com/abc.mp4'],
+        keptUrls: [],
+      });
 
       const result = await p.processor.process(makeJob());
 
-      expect(p.classifier.containsVideo).toHaveBeenCalled();
+      expect(p.classifier.partitionVideos).toHaveBeenCalledWith(
+        ['https://cdn.ghl.com/abc.mp4'],
+        'job-1',
+      );
+      expect(p.groupFetcher.fetch).not.toHaveBeenCalled();
+      expect(p.forwarder.forward).not.toHaveBeenCalled();
+      expect(p.ghl.send).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ ok: true, drained: 1, skipped: 'video' });
+    });
+
+    it('drops the video-only item but forwards a separate text item from the same batch', async () => {
+      const p = makeProcessor();
+      (p.debouncer.drain as jest.Mock).mockResolvedValue(videoThenSeparateTextItems);
+      setupReply(p);
+      (p.classifier.partitionVideos as jest.Mock).mockResolvedValue({
+        videoUrls: ['https://cdn.ghl.com/abc.mp4'],
+        keptUrls: [],
+      });
+
+      const result = await p.processor.process(makeJob());
+
+      expect(p.classifier.partitionVideos).toHaveBeenCalledWith(
+        ['https://cdn.ghl.com/abc.mp4'],
+        'job-1',
+      );
+      expect(p.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({ body: 'Hola quiero información', attachments: undefined }),
+      );
+      expect(p.ghl.send).toHaveBeenCalled();
+      expect(result).not.toHaveProperty('skipped');
+    });
+
+    it('strips only the video and keeps the item when it also carries a non-video attachment', async () => {
+      const p = makeProcessor();
+      (p.debouncer.drain as jest.Mock).mockResolvedValue(itemVideoPlusImage);
+      setupReply(p);
+      (p.classifier.partitionVideos as jest.Mock).mockResolvedValue({
+        videoUrls: ['https://cdn.ghl.com/abc.mp4'],
+        keptUrls: ['https://cdn.ghl.com/img.jpg'],
+      });
+
+      const result = await p.processor.process(makeJob());
+
+      expect(p.classifier.partitionVideos).toHaveBeenCalledWith(
+        ['https://cdn.ghl.com/abc.mp4', 'https://cdn.ghl.com/img.jpg'],
+        'job-1',
+      );
+      expect(p.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: 'mirá esto',
+          attachments: ['https://cdn.ghl.com/img.jpg'],
+        }),
+      );
+      expect(p.ghl.send).toHaveBeenCalled();
+      expect(result).not.toHaveProperty('skipped');
+    });
+
+    it('continues normally when the attachment is not a video (audio/image)', async () => {
+      const p = makeProcessor();
+      (p.debouncer.drain as jest.Mock).mockResolvedValue(itemVideoPlusTextSameItem);
+      setupReply(p);
+      (p.classifier.partitionVideos as jest.Mock).mockResolvedValue({
+        videoUrls: [],
+        keptUrls: ['https://cdn.ghl.com/abc.mp4'],
+      });
+
+      const result = await p.processor.process(makeJob());
+
+      expect(p.classifier.partitionVideos).toHaveBeenCalled();
       expect(p.forwarder.forward).toHaveBeenCalledWith(
         expect.objectContaining({ attachments: ['https://cdn.ghl.com/abc.mp4'] }),
       );
@@ -968,7 +1090,7 @@ describe('WebhookProcessor.process', () => {
 
       await p.processor.process(makeJob());
 
-      expect(p.classifier.containsVideo).not.toHaveBeenCalled();
+      expect(p.classifier.partitionVideos).not.toHaveBeenCalled();
       expect(p.forwarder.forward).toHaveBeenCalled();
     });
 
@@ -978,14 +1100,17 @@ describe('WebhookProcessor.process', () => {
         get: (key: string) => (key === 'DROP_INBOUND_VIDEO' ? false : undefined),
       } as unknown as ConfigService<AppEnv, true>;
       (p.processor as unknown as { config: ConfigService<AppEnv, true> }).config = config;
-      (p.debouncer.drain as jest.Mock).mockResolvedValue(itemsWithAttachment);
+      (p.debouncer.drain as jest.Mock).mockResolvedValue(itemVideoPlusTextSameItem);
       setupReply(p);
       // Even if it were a video, the toggle short-circuits before probing.
-      (p.classifier.containsVideo as jest.Mock).mockResolvedValue(true);
+      (p.classifier.partitionVideos as jest.Mock).mockResolvedValue({
+        videoUrls: ['https://cdn.ghl.com/abc.mp4'],
+        keptUrls: [],
+      });
 
       const result = await p.processor.process(makeJob());
 
-      expect(p.classifier.containsVideo).not.toHaveBeenCalled();
+      expect(p.classifier.partitionVideos).not.toHaveBeenCalled();
       expect(p.forwarder.forward).toHaveBeenCalledWith(
         expect.objectContaining({ attachments: ['https://cdn.ghl.com/abc.mp4'] }),
       );

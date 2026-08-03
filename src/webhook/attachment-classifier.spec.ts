@@ -35,71 +35,98 @@ describe('AttachmentClassifier', () => {
     );
   });
 
-  it('returns true when the Content-Type is video/mp4', async () => {
+  it('classifies a video/mp4 Content-Type as a video', async () => {
     const { classifier, head } = makeClassifier();
     head.mockResolvedValue(ok('video/mp4'));
 
-    await expect(classifier.containsVideo(['https://cdn/x.mp4'], 'j1')).resolves.toBe(true);
+    await expect(classifier.partitionVideos(['https://cdn/x.mp4'], 'j1')).resolves.toEqual({
+      videoUrls: ['https://cdn/x.mp4'],
+      keptUrls: [],
+    });
   });
 
-  it('returns true for any video/* subtype regardless of case', async () => {
+  it('classifies any video/* subtype as a video regardless of case', async () => {
     const { classifier, head } = makeClassifier();
     head.mockResolvedValue(ok('Video/Quicktime'));
 
-    await expect(classifier.containsVideo(['https://cdn/x.mov'], 'j1')).resolves.toBe(true);
+    await expect(classifier.partitionVideos(['https://cdn/x.mov'], 'j1')).resolves.toEqual({
+      videoUrls: ['https://cdn/x.mov'],
+      keptUrls: [],
+    });
   });
 
-  it('returns false for audio/mp4 (an audio in an mp4 container is kept)', async () => {
+  it('keeps audio/mp4 (an audio in an mp4 container is not a video)', async () => {
     const { classifier, head } = makeClassifier();
     head.mockResolvedValue(ok('audio/mp4'));
 
-    await expect(classifier.containsVideo(['https://cdn/x.mp4'], 'j1')).resolves.toBe(false);
+    await expect(classifier.partitionVideos(['https://cdn/x.mp4'], 'j1')).resolves.toEqual({
+      videoUrls: [],
+      keptUrls: ['https://cdn/x.mp4'],
+    });
   });
 
-  it('returns false for image/jpeg', async () => {
+  it('keeps image/jpeg', async () => {
     const { classifier, head } = makeClassifier();
     head.mockResolvedValue(ok('image/jpeg'));
 
-    await expect(classifier.containsVideo(['https://cdn/x.jpg'], 'j1')).resolves.toBe(false);
+    await expect(classifier.partitionVideos(['https://cdn/x.jpg'], 'j1')).resolves.toEqual({
+      videoUrls: [],
+      keptUrls: ['https://cdn/x.jpg'],
+    });
   });
 
-  it('fail-open: returns false when the HEAD request throws', async () => {
+  it('fail-open: keeps the URL when the HEAD request throws', async () => {
     const { classifier, head } = makeClassifier();
     head.mockRejectedValue(Object.assign(new Error('ECONNRESET'), { code: 'ECONNRESET' }));
 
-    await expect(classifier.containsVideo(['https://cdn/x.mp4'], 'j1')).resolves.toBe(false);
+    await expect(classifier.partitionVideos(['https://cdn/x.mp4'], 'j1')).resolves.toEqual({
+      videoUrls: [],
+      keptUrls: ['https://cdn/x.mp4'],
+    });
   });
 
-  it('fail-open: returns false on a non-2xx status (e.g. 405 HEAD not allowed)', async () => {
+  it('fail-open: keeps the URL on a non-2xx status (e.g. 405 HEAD not allowed)', async () => {
     const { classifier, head } = makeClassifier();
     head.mockResolvedValue({ status: 405, headers: {} });
 
-    await expect(classifier.containsVideo(['https://cdn/x.mp4'], 'j1')).resolves.toBe(false);
+    await expect(classifier.partitionVideos(['https://cdn/x.mp4'], 'j1')).resolves.toEqual({
+      videoUrls: [],
+      keptUrls: ['https://cdn/x.mp4'],
+    });
   });
 
-  it('fail-open: returns false when Content-Type is missing', async () => {
+  it('fail-open: keeps the URL when Content-Type is missing', async () => {
     const { classifier, head } = makeClassifier();
     head.mockResolvedValue({ status: 200, headers: {} });
 
-    await expect(classifier.containsVideo(['https://cdn/x.mp4'], 'j1')).resolves.toBe(false);
+    await expect(classifier.partitionVideos(['https://cdn/x.mp4'], 'j1')).resolves.toEqual({
+      videoUrls: [],
+      keptUrls: ['https://cdn/x.mp4'],
+    });
   });
 
-  it('returns false for an empty attachment list without probing', async () => {
+  it('returns empty partitions for an empty attachment list without probing', async () => {
     const { classifier, head } = makeClassifier();
 
-    await expect(classifier.containsVideo([], 'j1')).resolves.toBe(false);
+    await expect(classifier.partitionVideos([], 'j1')).resolves.toEqual({
+      videoUrls: [],
+      keptUrls: [],
+    });
     expect(head).not.toHaveBeenCalled();
   });
 
-  it('returns true when ANY attachment in a mixed set is a video', async () => {
+  it('splits a mixed set into video and non-video URLs, probed concurrently', async () => {
     const { classifier, head } = makeClassifier();
     head
       .mockResolvedValueOnce(ok('image/jpeg'))
       .mockResolvedValueOnce(ok('video/mp4'));
 
     await expect(
-      classifier.containsVideo(['https://cdn/a.jpg', 'https://cdn/b.mp4'], 'j1'),
-    ).resolves.toBe(true);
+      classifier.partitionVideos(['https://cdn/a.jpg', 'https://cdn/b.mp4'], 'j1'),
+    ).resolves.toEqual({
+      videoUrls: ['https://cdn/b.mp4'],
+      keptUrls: ['https://cdn/a.jpg'],
+    });
     expect(head).toHaveBeenCalledTimes(2);
   });
 });
