@@ -74,19 +74,25 @@ function makeProcessor() {
 function makeJob(
   overrides: Partial<{ id: string; name: string; attemptsMade: number; data: FlushJobData }> = {},
 ) {
-  return {
+  const data =
+    overrides.data ??
+    ({
+      debounceKey: 'ventas',
+      contactId: 'c1',
+      source: 'workflow',
+      agentId: 'ventas',
+    } as FlushJobData);
+  const job = {
     id: overrides.id ?? 'job-1',
     name: overrides.name ?? WEBHOOK_FLUSH_JOB,
     attemptsMade: overrides.attemptsMade ?? 0,
-    data:
-      overrides.data ??
-      ({
-        debounceKey: 'ventas',
-        contactId: 'c1',
-        source: 'workflow',
-        agentId: 'ventas',
-      } as FlushJobData),
-  } as unknown as Job<FlushJobData, unknown, string>;
+    data,
+    updateData: jest.fn().mockImplementation((next: FlushJobData) => {
+      job.data = next;
+      return Promise.resolve();
+    }),
+  };
+  return job as unknown as Job<FlushJobData, unknown, string>;
 }
 
 const sampleItems: DebouncedMessage[] = [
@@ -1128,6 +1134,66 @@ describe('WebhookProcessor.process', () => {
     expect(forwarder.forward).not.toHaveBeenCalled();
     expect(ghl.send).not.toHaveBeenCalled();
     expect(insistence.schedule).not.toHaveBeenCalled();
+    expect(result).toEqual({ ok: true, drained: 0 });
+  });
+
+  it('persists drained items onto the job on the first attempt', async () => {
+    const { processor, debouncer, groupFetcher, forwarder, ghl, insistence } = makeProcessor();
+    (debouncer.drain as jest.Mock).mockResolvedValue(sampleItems);
+    (groupFetcher.fetch as jest.Mock).mockResolvedValue({ apiKey: 'pit-loc-key', insistences: [] });
+    (forwarder.forward as jest.Mock).mockResolvedValue({
+      messages: [{ type: 'text', content: 'reply' }],
+      durationMs: 5,
+    });
+    (ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 3 });
+    (insistence.schedule as jest.Mock).mockResolvedValue(undefined);
+
+    const job = makeJob({ attemptsMade: 0 });
+    await processor.process(job);
+
+    expect(debouncer.drain).toHaveBeenCalledTimes(1);
+    expect(job.updateData).toHaveBeenCalledWith(
+      expect.objectContaining({ drainedItems: sampleItems }),
+    );
+  });
+
+  it('reuses drainedItems from job.data on a retry instead of draining again', async () => {
+    const { processor, debouncer, groupFetcher, forwarder, ghl, insistence } = makeProcessor();
+    (groupFetcher.fetch as jest.Mock).mockResolvedValue({ apiKey: 'pit-loc-key', insistences: [] });
+    (forwarder.forward as jest.Mock).mockResolvedValue({
+      messages: [{ type: 'text', content: 'reply' }],
+      durationMs: 5,
+    });
+    (ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 3 });
+    (insistence.schedule as jest.Mock).mockResolvedValue(undefined);
+
+    const job = makeJob({
+      attemptsMade: 1,
+      data: {
+        debounceKey: 'ventas',
+        contactId: 'c1',
+        source: 'workflow',
+        agentId: 'ventas',
+        drainedItems: sampleItems,
+      } as FlushJobData,
+    });
+
+    const result = await processor.process(job);
+
+    expect(debouncer.drain).not.toHaveBeenCalled();
+    expect(forwarder.forward).toHaveBeenCalledWith(expect.objectContaining({ contactId: 'c1' }));
+    expect(result).toMatchObject({ ok: true, drained: 1 });
+  });
+
+  it('completes as a no-op retry when drainedItems is missing (e.g. pre-fix job)', async () => {
+    const { processor, debouncer, groupFetcher, forwarder } = makeProcessor();
+
+    const job = makeJob({ attemptsMade: 1 });
+    const result = await processor.process(job);
+
+    expect(debouncer.drain).not.toHaveBeenCalled();
+    expect(groupFetcher.fetch).not.toHaveBeenCalled();
+    expect(forwarder.forward).not.toHaveBeenCalled();
     expect(result).toEqual({ ok: true, drained: 0 });
   });
 

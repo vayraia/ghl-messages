@@ -35,6 +35,13 @@ export interface DebouncedMessage {
  *
  * `locationId` is only set for the inbound source (so the processor can
  * fetch the group without inspecting the items).
+ *
+ * `drainedItems` starts unset. `drain()` empties the Redis list the first
+ * time a job runs, so a BullMQ retry re-entering `process()` would otherwise
+ * find nothing left to send and complete as a silent no-op — losing the
+ * message. The processor persists the drained items here (via
+ * `job.updateData`) right after the first drain so retries reuse them
+ * instead of draining again.
  */
 export interface FlushJobData {
   debounceKey: string;
@@ -42,6 +49,7 @@ export interface FlushJobData {
   source: FlushSource;
   agentId?: string;
   locationId?: string;
+  drainedItems?: DebouncedMessage[];
 }
 
 export interface AcceptResult {

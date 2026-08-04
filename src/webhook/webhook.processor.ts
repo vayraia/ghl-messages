@@ -18,7 +18,7 @@ import { GhlReply, inferImageMimeType, inferDocumentMimeType, basenameFromUrl } 
 import { AttachmentClassifier } from './attachment-classifier';
 import { GroupFetcher } from './group-fetcher';
 import { InsistenceClient } from './insistence-client';
-import { FlushJobData, MessageDebouncer } from './message-debouncer';
+import { DebouncedMessage, FlushJobData, MessageDebouncer } from './message-debouncer';
 import { WEBHOOK_FLUSH_JOB, WEBHOOK_QUEUE_TOKEN } from './webhook.tokens';
 
 /**
@@ -89,7 +89,20 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
     const { debounceKey, contactId, source } = job.data;
     const started = Date.now();
 
-    let items = await this.debouncer.drain(debounceKey, contactId);
+    // `drain()` empties the Redis list, so it must only run on the first
+    // attempt — a BullMQ retry re-entering process() would otherwise find an
+    // already-drained (empty) list and complete as a silent no-op, losing
+    // the message that failed to forward. The drained items are persisted
+    // onto the job so retries reuse them instead of draining again.
+    let items: DebouncedMessage[];
+    if (job.attemptsMade === 0) {
+      items = await this.debouncer.drain(debounceKey, contactId);
+      if (items.length > 0) {
+        await job.updateData({ ...job.data, drainedItems: items });
+      }
+    } else {
+      items = job.data.drainedItems ?? [];
+    }
     const drainedCount = items.length;
     if (items.length === 0) {
       // Could happen if a more recent flush job already drained the list.
