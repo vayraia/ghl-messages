@@ -984,6 +984,7 @@ describe('WebhookProcessor.process', () => {
 
     it('drops the flush when it is video-only (no text left to forward)', async () => {
       const p = makeProcessor();
+      (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({ apiKey: 'k' });
       (p.debouncer.drain as jest.Mock).mockResolvedValue(videoOnlyItems);
       (p.classifier.partitionVideos as jest.Mock).mockResolvedValue({
         videoUrls: ['https://cdn.ghl.com/abc.mp4'],
@@ -996,7 +997,7 @@ describe('WebhookProcessor.process', () => {
         ['https://cdn.ghl.com/abc.mp4'],
         'job-1',
       );
-      expect(p.groupFetcher.fetch).not.toHaveBeenCalled();
+      expect(p.groupFetcher.fetch).toHaveBeenCalledWith('loc_abc', 'job-1');
       expect(p.forwarder.forward).not.toHaveBeenCalled();
       expect(p.ghl.send).not.toHaveBeenCalled();
       expect(p.insistence.schedule).not.toHaveBeenCalled();
@@ -1005,6 +1006,7 @@ describe('WebhookProcessor.process', () => {
 
     it('drops the whole item (text included) when its only attachment is a video', async () => {
       const p = makeProcessor();
+      (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({ apiKey: 'k' });
       (p.debouncer.drain as jest.Mock).mockResolvedValue(itemVideoPlusTextSameItem);
       (p.classifier.partitionVideos as jest.Mock).mockResolvedValue({
         videoUrls: ['https://cdn.ghl.com/abc.mp4'],
@@ -1017,7 +1019,7 @@ describe('WebhookProcessor.process', () => {
         ['https://cdn.ghl.com/abc.mp4'],
         'job-1',
       );
-      expect(p.groupFetcher.fetch).not.toHaveBeenCalled();
+      expect(p.groupFetcher.fetch).toHaveBeenCalledWith('loc_abc', 'job-1');
       expect(p.forwarder.forward).not.toHaveBeenCalled();
       expect(p.ghl.send).not.toHaveBeenCalled();
       expect(result).toMatchObject({ ok: true, drained: 1, skipped: 'video' });
@@ -1121,6 +1123,54 @@ describe('WebhookProcessor.process', () => {
         expect.objectContaining({ attachments: ['https://cdn.ghl.com/abc.mp4'] }),
       );
       expect(result).not.toHaveProperty('skipped');
+    });
+
+    it('per-group drop_inbound_video: false overrides a global DROP_INBOUND_VIDEO=true default', async () => {
+      const p = makeProcessor();
+      (p.debouncer.drain as jest.Mock).mockResolvedValue(itemVideoPlusTextSameItem);
+      setupReply(p);
+      (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({
+        apiKey: 'k',
+        dropInboundVideo: false,
+      });
+      // Even if it were a video, the group override short-circuits before probing.
+      (p.classifier.partitionVideos as jest.Mock).mockResolvedValue({
+        videoUrls: ['https://cdn.ghl.com/abc.mp4'],
+        keptUrls: [],
+      });
+
+      const result = await p.processor.process(makeJob());
+
+      expect(p.classifier.partitionVideos).not.toHaveBeenCalled();
+      expect(p.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({ attachments: ['https://cdn.ghl.com/abc.mp4'] }),
+      );
+      expect(result).not.toHaveProperty('skipped');
+    });
+
+    it('per-group drop_inbound_video: true overrides a global DROP_INBOUND_VIDEO=false default', async () => {
+      const p = makeProcessor();
+      const config = {
+        get: (key: string) => (key === 'DROP_INBOUND_VIDEO' ? false : undefined),
+      } as unknown as ConfigService<AppEnv, true>;
+      (p.processor as unknown as { config: ConfigService<AppEnv, true> }).config = config;
+      (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({
+        apiKey: 'k',
+        dropInboundVideo: true,
+      });
+      (p.debouncer.drain as jest.Mock).mockResolvedValue(videoOnlyItems);
+      (p.classifier.partitionVideos as jest.Mock).mockResolvedValue({
+        videoUrls: ['https://cdn.ghl.com/abc.mp4'],
+        keptUrls: [],
+      });
+
+      const result = await p.processor.process(makeJob());
+
+      expect(p.classifier.partitionVideos).toHaveBeenCalledWith(
+        ['https://cdn.ghl.com/abc.mp4'],
+        'job-1',
+      );
+      expect(result).toMatchObject({ ok: true, drained: 1, skipped: 'video' });
     });
   });
 

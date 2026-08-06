@@ -36,6 +36,9 @@ export interface GroupSettings {
   // Per-group inbound debounce window (ms). Overrides MESSAGE_DEBOUNCE_MS when
   // present; undefined falls back to the global default.
   debounceMs?: number;
+  // Per-group override for DROP_INBOUND_VIDEO. Present (boolean) overrides the
+  // global default; undefined falls back to it.
+  dropInboundVideo?: boolean;
 }
 
 interface GroupResponse {
@@ -50,6 +53,7 @@ interface GroupResponse {
     whatsapp_number_id?: unknown;
     ai_schedule?: unknown;
     debounce_ms?: unknown;
+    drop_inbound_video?: unknown;
     [key: string]: unknown;
   };
   [key: string]: unknown;
@@ -152,6 +156,7 @@ export class GroupFetcher {
         whatsappNumberId: parseWhatsappNumberId(body.general_settings?.whatsapp_number_id),
         aiSchedule: parseAiSchedule(body.general_settings?.ai_schedule),
         debounceMs: parseDebounceMs(body.general_settings?.debounce_ms),
+        dropInboundVideo: parseDropInboundVideo(body.general_settings?.drop_inbound_video),
       };
       if (this.cacheTtlMs > 0) {
         this.cache.set(locationId, {
@@ -194,6 +199,13 @@ function parseDebounceMs(raw: unknown): number | undefined {
   if (!Number.isFinite(n)) return undefined;
   const int = Math.trunc(n);
   return int >= 0 ? int : undefined;
+}
+
+// Per-group override for DROP_INBOUND_VIDEO. Only a real boolean overrides
+// the global default; anything else (missing, string, number) falls back to
+// it — no truthy/falsy coercion on partial config.
+function parseDropInboundVideo(raw: unknown): boolean | undefined {
+  return typeof raw === 'boolean' ? raw : undefined;
 }
 
 function parseWhatsappNumberId(raw: unknown): string | undefined {

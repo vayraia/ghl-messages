@@ -110,6 +110,21 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
       return { ok: true, drained: 0 };
     }
 
+    // locationId is uniform across every item in the batch (they're grouped by
+    // the same debounceKey+contactId, which for the inbound source encodes the
+    // location). Resolved from the pre-filter items so the group can be
+    // fetched before the video gate below needs its per-group override.
+    const locationId = job.data.locationId ?? items[0].locationId;
+    if (!locationId) {
+      this.logger.warn(
+        { jobId: job.id, debounceKey, contactId },
+        'Missing locationId — non-retryable',
+      );
+      throw new UnrecoverableError('locationId is required');
+    }
+
+    const group = await this.groupFetcher.fetch(locationId, String(job.id));
+
     // Video gate: GHL can't tell us an attachment is a video (audio and video
     // both arrive as a `.mp4` URL), so we probe the CDN's Content-Type on
     // every attachment in the batch. Filtering runs per item, not per batch:
@@ -119,10 +134,15 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
     //   - an item that also carries a non-video attachment (e.g. a video sent
     //     alongside an image) keeps the item — only the video URL is
     //     stripped — since there's other real content to forward.
-    // Runs before the group/contact fetches so a video-only conversation
-    // costs nothing downstream. Only pays the HEAD when attachments exist.
+    // The group is fetched (cached) first so `general_settings.drop_inbound_video`
+    // can override the global DROP_INBOUND_VIDEO default per group. Runs
+    // before the contact fetch so a video-only conversation still costs
+    // nothing beyond the (cached) group lookup. Only pays the HEAD when
+    // attachments exist.
     const allAttachments = items.flatMap((i) => i.attachments ?? []);
-    if (allAttachments.length > 0 && this.config.get('DROP_INBOUND_VIDEO', { infer: true })) {
+    const dropInboundVideo =
+      group.dropInboundVideo ?? this.config.get('DROP_INBOUND_VIDEO', { infer: true });
+    if (allAttachments.length > 0 && dropInboundVideo) {
       const { videoUrls } = await this.classifier.partitionVideos(allAttachments, String(job.id));
       if (videoUrls.length > 0) {
         const videoUrlSet = new Set(videoUrls);
@@ -165,21 +185,8 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
     const attachments = items.flatMap((i) => i.attachments ?? []);
     const last = items[items.length - 1];
     const replyChannel = last.replyChannel;
-    // For inbound source the locationId is on job.data (agentId unknown at
-    // enqueue time); for workflow source the items carry it.
-    const locationId = job.data.locationId ?? last.locationId;
     const requestId = last.requestId;
     const receivedAt = items[0].receivedAt;
-
-    if (!locationId) {
-      this.logger.warn(
-        { jobId: job.id, debounceKey, contactId },
-        'Missing locationId — non-retryable',
-      );
-      throw new UnrecoverableError('locationId is required');
-    }
-
-    const group = await this.groupFetcher.fetch(locationId, String(job.id));
 
     // Availability gate: if the group defines an `ai_schedule` and the current
     // time falls outside its active window, do not invoke the AI. This covers

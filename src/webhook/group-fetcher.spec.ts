@@ -517,6 +517,31 @@ describe('GroupFetcher', () => {
     });
   });
 
+  describe('drop_inbound_video', () => {
+    it('parses a boolean drop_inbound_video', async () => {
+      const { fetcher, get } = makeFetcher();
+      get.mockResolvedValue({
+        status: 200,
+        data: { api_key: 'sk', general_settings: { drop_inbound_video: false } },
+      });
+
+      expect((await fetcher.fetch('loc_abc', 'job-1')).dropInboundVideo).toBe(false);
+    });
+
+    it('returns dropInboundVideo=undefined when missing or non-boolean', async () => {
+      const { fetcher, get } = makeFetcher();
+
+      get.mockResolvedValue({ status: 200, data: { api_key: 'sk', general_settings: {} } });
+      expect((await fetcher.fetch('loc_abc', 'job-1')).dropInboundVideo).toBeUndefined();
+
+      get.mockResolvedValue({
+        status: 200,
+        data: { api_key: 'sk', general_settings: { drop_inbound_video: 'true' } },
+      });
+      expect((await fetcher.fetch('loc_abc', 'job-1')).dropInboundVideo).toBeUndefined();
+    });
+  });
+
   describe('in-memory cache (GROUP_CACHE_TTL_MS)', () => {
     it('serves a second fetch from cache without a new HTTP call', async () => {
       const { fetcher, get } = makeFetcher({ GROUP_CACHE_TTL_MS: 60_000 });
