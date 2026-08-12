@@ -5,11 +5,13 @@ import { Job, UnrecoverableError } from 'bullmq';
 import { AppEnv } from '../config/env.validation';
 import { isAiAvailable } from './ai-schedule';
 import { resolveAgentForChannel } from './channel-resolver';
+import { resolveAgentForMessagePrefix } from './message-agent-resolver';
 import { ChatMessage, WebhookForwarder } from './webhook-forwarder';
 import {
   GhlContactClient,
   buildNamedCustomFields,
   resolveFieldValueByKey,
+  ContactFieldUpdate,
   NamedCustomField,
   AssignedUser,
   GetContactResult,
@@ -239,14 +241,20 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
     }
 
     // Inbound flushes resolve agentId with this precedence:
-    //   contact.<AGENT_FIELD_KEY> (e.g. contact.aiagent) when set
+    //   message_agents prefix match (e.g. an ad-lead message) when it matches
+    //     -> contact.<AGENT_FIELD_KEY> (e.g. contact.aiagent) when set
     //     -> channel_agents.<channel>
     //     -> default_agent
     //     -> skip (no agent to forward to).
-    // The per-contact override lets a single contact pin a specific agent even
-    // when the location has no default configured.
+    // A message_agents match always wins, even over a previously-set contact
+    // override: it also overwrites contact.<AGENT_FIELD_KEY> below so the new
+    // routing sticks for any follow-up in the conversation. The per-contact
+    // override otherwise lets a single contact pin a specific agent even when
+    // the location has no default configured.
     let agentId: string;
+    let messageAgentMatch: string | undefined;
     if (source === 'inbound') {
+      const prefixMatch = resolveAgentForMessagePrefix(items[0].body, group.messageAgents);
       const contactAgent = await this.resolveContactAgent(
         contact,
         locationId,
@@ -254,7 +262,7 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
         String(job.id),
       );
       const channelAgent = resolveAgentForChannel(group.channelAgents, replyChannel);
-      const resolved = contactAgent ?? channelAgent ?? group.defaultAgent;
+      const resolved = prefixMatch?.agentId ?? contactAgent ?? channelAgent ?? group.defaultAgent;
       if (!resolved) {
         this.logger.log(
           { jobId: job.id, locationId, contactId, replyChannel },
@@ -267,7 +275,19 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
           skipped: 'no_default_agent',
         };
       }
-      if (contactAgent) {
+      if (prefixMatch) {
+        messageAgentMatch = prefixMatch.agentId;
+        this.logger.log(
+          {
+            jobId: job.id,
+            locationId,
+            contactId,
+            agentId: prefixMatch.agentId,
+            rule: prefixMatch.message,
+          },
+          'Inbound agent_id resolved by message_agents prefix match',
+        );
+      } else if (contactAgent) {
         this.logger.log(
           { jobId: job.id, locationId, contactId, agentId: contactAgent },
           'Inbound agent_id overridden by contact custom field',
@@ -362,6 +382,21 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
     // (a contact carrying `desactivar ia` never reaches here — the hard-stop
     // above returns early — so the filter is defensive). Omitted when empty.
     const tags = (contact.tags ?? []).filter((t) => t !== AI_DISABLE_TAG);
+
+    // A message_agents match persists its agent id onto the contact's
+    // <AGENT_FIELD_KEY> field so any follow-up flush (which re-reads that
+    // field via resolveContactAgent) keeps routing to the same agent, not
+    // just this one. Best-effort: the forward below uses `agentId` (already
+    // resolved) regardless of whether this write succeeds.
+    if (messageAgentMatch) {
+      await this.persistContactAgent(
+        contactId,
+        locationId,
+        group.apiKey,
+        messageAgentMatch,
+        String(job.id),
+      );
+    }
 
     const chat = await this.forwarder.forward({
       jobId: String(job.id),
@@ -522,6 +557,42 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
         'Contact agent override resolution failed — falling back to channel/default agent',
       );
       return undefined;
+    }
+  }
+
+  /**
+   * Writes `agentId` onto the contact's `<AGENT_FIELD_KEY>` field (e.g.
+   * `contact.aiagent`) after a `message_agents` prefix match. Best-effort:
+   * the field-definition lookup and the write are both swallowed on failure
+   * so a message_agents match still reaches `/chat` even if persisting the
+   * override fails. The defs are cached per location, shared with
+   * `resolveContactAgent`.
+   */
+  private async persistContactAgent(
+    contactId: string,
+    locationId: string,
+    apiKey: string,
+    agentId: string,
+    jobId: string,
+  ): Promise<void> {
+    const fieldKey = this.config.get('AGENT_FIELD_KEY', { infer: true });
+    try {
+      const defs = await this.contactClient.listFieldDefs({ jobId, locationId, apiKey });
+      const id = defs.keyToId.get(fieldKey.trim().toLowerCase());
+      if (!id) {
+        this.logger.debug(
+          { jobId, locationId, agentFieldKey: fieldKey },
+          'message_agents match — aiagent field not defined for location, skipping write',
+        );
+        return;
+      }
+      const field: ContactFieldUpdate = { id, key: fieldKey, value: agentId };
+      await this.contactClient.updateContactFields({ jobId, contactId, apiKey, fields: [field] });
+    } catch (err) {
+      this.logger.warn(
+        { jobId, locationId, contactId, err: (err as Error).message },
+        'message_agents match — persisting aiagent field failed (swallowed)',
+      );
     }
   }
 }

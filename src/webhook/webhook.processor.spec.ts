@@ -911,6 +911,165 @@ describe('WebhookProcessor.process', () => {
         );
       });
     });
+
+    describe('message_agents prefix match', () => {
+      const adLeadItems: DebouncedMessage[] = [
+        {
+          body: 'Headline: Épica\n*Source URL:* https://www.instagram.com/p/DO01q06gO1c/\n\n¡Hola! Quiero más información',
+          replyChannel: 'WhatsApp',
+          locationId: undefined,
+          requestId: 'msg_1',
+          receivedAt: '2026-05-06T19:50:39.476Z',
+        },
+      ];
+
+      function withReply(p: ReturnType<typeof makeProcessor>): void {
+        (p.forwarder.forward as jest.Mock).mockResolvedValue({
+          messages: [{ type: 'text', content: 'reply' }],
+          durationMs: 1,
+        });
+        (p.ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 1 });
+        (p.insistence.schedule as jest.Mock).mockResolvedValue(undefined);
+      }
+
+      it('routes to the matched agent, strips the ad preamble, and persists it onto the contact', async () => {
+        const p = makeProcessor();
+        (p.debouncer.drain as jest.Mock).mockResolvedValue(adLeadItems);
+        (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({
+          apiKey: 'pit-k',
+          defaultAgent: 'agent_default',
+          messageAgents: [{ message: '¡Hola! Quiero más información', agentId: 'agent_ads' }],
+        });
+        (p.contactClient.listFieldDefs as jest.Mock).mockResolvedValue({
+          idToName: new Map<string, string>(),
+          keyToId: new Map<string, string>([['contact.aiagent', 'cf_ai']]),
+        });
+        withReply(p);
+
+        const result = await p.processor.process(inboundJob());
+
+        expect(p.forwarder.forward).toHaveBeenCalledWith(
+          expect.objectContaining({ agentId: 'agent_ads' }),
+        );
+        expect(p.contactClient.updateContactFields).toHaveBeenCalledWith({
+          jobId: 'job-1',
+          contactId: 'c1',
+          apiKey: 'pit-k',
+          fields: [{ id: 'cf_ai', key: 'contact.aiagent', value: 'agent_ads' }],
+        });
+        expect(result).toMatchObject({ ok: true, drained: 1, ghlStatus: 200 });
+      });
+
+      it('overrides an existing contact aiagent value when a message_agents rule matches', async () => {
+        const p = makeProcessor();
+        (p.debouncer.drain as jest.Mock).mockResolvedValue(adLeadItems);
+        (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({
+          apiKey: 'pit-k',
+          messageAgents: [{ message: '¡Hola! Quiero más información', agentId: 'agent_ads' }],
+        });
+        (p.contactClient.get as jest.Mock).mockResolvedValue({
+          status: 200,
+          customFields: [{ id: 'cf_ai', value: 'agent_from_contact' }],
+        });
+        (p.contactClient.listFieldDefs as jest.Mock).mockResolvedValue({
+          idToName: new Map<string, string>(),
+          keyToId: new Map<string, string>([['contact.aiagent', 'cf_ai']]),
+        });
+        withReply(p);
+
+        await p.processor.process(inboundJob());
+
+        expect(p.forwarder.forward).toHaveBeenCalledWith(
+          expect.objectContaining({ agentId: 'agent_ads' }),
+        );
+      });
+
+      it('falls back to the existing precedence when no message_agents rule matches', async () => {
+        const p = makeProcessor();
+        (p.debouncer.drain as jest.Mock).mockResolvedValue(inboundItems);
+        (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({
+          apiKey: 'pit-k',
+          defaultAgent: 'agent_default',
+          messageAgents: [{ message: 'no-match-prefix', agentId: 'agent_ads' }],
+        });
+        withReply(p);
+
+        await p.processor.process(inboundJob());
+
+        expect(p.forwarder.forward).toHaveBeenCalledWith(
+          expect.objectContaining({ agentId: 'agent_default' }),
+        );
+        expect(p.contactClient.updateContactFields).not.toHaveBeenCalled();
+      });
+
+      it('matches against the first item of the batch, not later items', async () => {
+        const p = makeProcessor();
+        (p.debouncer.drain as jest.Mock).mockResolvedValue([
+          {
+            body: 'Hola',
+            replyChannel: 'WhatsApp',
+            locationId: undefined,
+            requestId: 'msg_1',
+            receivedAt: '2026-05-06T19:50:39.476Z',
+          },
+          {
+            body: '¡Hola! Quiero más información',
+            replyChannel: 'WhatsApp',
+            locationId: undefined,
+            requestId: 'msg_2',
+            receivedAt: '2026-05-06T19:50:40.000Z',
+          },
+        ]);
+        (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({
+          apiKey: 'pit-k',
+          defaultAgent: 'agent_default',
+          messageAgents: [{ message: '¡Hola! Quiero más información', agentId: 'agent_ads' }],
+        });
+        withReply(p);
+
+        await p.processor.process(inboundJob());
+
+        expect(p.forwarder.forward).toHaveBeenCalledWith(
+          expect.objectContaining({ agentId: 'agent_default' }),
+        );
+        expect(p.contactClient.updateContactFields).not.toHaveBeenCalled();
+      });
+
+      it('still forwards with the matched agent when persisting the aiagent field fails', async () => {
+        const p = makeProcessor();
+        (p.debouncer.drain as jest.Mock).mockResolvedValue(adLeadItems);
+        (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({
+          apiKey: 'pit-k',
+          messageAgents: [{ message: '¡Hola! Quiero más información', agentId: 'agent_ads' }],
+        });
+        (p.contactClient.listFieldDefs as jest.Mock).mockRejectedValue(new Error('boom'));
+        withReply(p);
+
+        const result = await p.processor.process(inboundJob());
+
+        expect(p.forwarder.forward).toHaveBeenCalledWith(
+          expect.objectContaining({ agentId: 'agent_ads' }),
+        );
+        expect(result).toMatchObject({ ok: true, ghlStatus: 200 });
+      });
+
+      it('skips the write when the aiagent field is not defined for the location', async () => {
+        const p = makeProcessor();
+        (p.debouncer.drain as jest.Mock).mockResolvedValue(adLeadItems);
+        (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({
+          apiKey: 'pit-k',
+          messageAgents: [{ message: '¡Hola! Quiero más información', agentId: 'agent_ads' }],
+        });
+        withReply(p);
+
+        await p.processor.process(inboundJob());
+
+        expect(p.contactClient.updateContactFields).not.toHaveBeenCalled();
+        expect(p.forwarder.forward).toHaveBeenCalledWith(
+          expect.objectContaining({ agentId: 'agent_ads' }),
+        );
+      });
+    });
   });
 
   describe('video attachment gate', () => {

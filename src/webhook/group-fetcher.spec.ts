@@ -542,6 +542,104 @@ describe('GroupFetcher', () => {
     });
   });
 
+  describe('message_agents', () => {
+    it('parses message_agents entries with message and agent_id', async () => {
+      const { fetcher, get } = makeFetcher();
+      get.mockResolvedValue({
+        status: 200,
+        data: {
+          api_key: 'sk',
+          general_settings: {
+            message_agents: [
+              { message: '¡Hola! Quiero más información', agent_id: 'agent_ads' },
+              { message: 'Hola', agent_id: 'agent_generic' },
+            ],
+          },
+        },
+      });
+
+      const result = await fetcher.fetch('loc_abc', 'job-1');
+
+      expect(result.messageAgents).toEqual([
+        { message: '¡Hola! Quiero más información', agentId: 'agent_ads' },
+        { message: 'Hola', agentId: 'agent_generic' },
+      ]);
+    });
+
+    it('trims message and agent_id and preserves array order', async () => {
+      const { fetcher, get } = makeFetcher();
+      get.mockResolvedValue({
+        status: 200,
+        data: {
+          api_key: 'sk',
+          general_settings: {
+            message_agents: [{ message: '  Hola  ', agent_id: '  agent_x  ' }],
+          },
+        },
+      });
+
+      const result = await fetcher.fetch('loc_abc', 'job-1');
+
+      expect(result.messageAgents).toEqual([{ message: 'Hola', agentId: 'agent_x' }]);
+    });
+
+    it('drops entries missing message or agent_id, or with blank values', async () => {
+      const { fetcher, get } = makeFetcher();
+      get.mockResolvedValue({
+        status: 200,
+        data: {
+          api_key: 'sk',
+          general_settings: {
+            message_agents: [
+              { message: 'Hola', agent_id: 'agent_keep' },
+              { message: '   ', agent_id: 'agent_blank_message' },
+              { message: 'No agent' },
+              { agent_id: 'agent_no_message' },
+              { message: 'Blank agent', agent_id: '   ' },
+              null,
+              'string-entry',
+              { message: 42, agent_id: 'agent_wrong_type' },
+            ],
+          },
+        },
+      });
+
+      const result = await fetcher.fetch('loc_abc', 'job-1');
+
+      expect(result.messageAgents).toEqual([{ message: 'Hola', agentId: 'agent_keep' }]);
+    });
+
+    it('returns messageAgents=undefined when the field is missing', async () => {
+      const { fetcher, get } = makeFetcher();
+      get.mockResolvedValue({ status: 200, data: { api_key: 'sk', general_settings: {} } });
+
+      expect((await fetcher.fetch('loc_abc', 'job-1')).messageAgents).toBeUndefined();
+    });
+
+    it('returns messageAgents=undefined for an empty array', async () => {
+      const { fetcher, get } = makeFetcher();
+      get.mockResolvedValue({
+        status: 200,
+        data: { api_key: 'sk', general_settings: { message_agents: [] } },
+      });
+
+      expect((await fetcher.fetch('loc_abc', 'job-1')).messageAgents).toBeUndefined();
+    });
+
+    it('returns messageAgents=undefined when the field is not an array', async () => {
+      const { fetcher, get } = makeFetcher();
+      get.mockResolvedValue({
+        status: 200,
+        data: {
+          api_key: 'sk',
+          general_settings: { message_agents: { message: 'Hola', agent_id: 'x' } },
+        },
+      });
+
+      expect((await fetcher.fetch('loc_abc', 'job-1')).messageAgents).toBeUndefined();
+    });
+  });
+
   describe('in-memory cache (GROUP_CACHE_TTL_MS)', () => {
     it('serves a second fetch from cache without a new HTTP call', async () => {
       const { fetcher, get } = makeFetcher({ GROUP_CACHE_TTL_MS: 60_000 });

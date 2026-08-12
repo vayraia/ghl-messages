@@ -23,6 +23,16 @@ export interface NonBlockingUser {
 
 export type InsistenceSchedule = Record<string, unknown>;
 
+/**
+ * A single `general_settings.message_agents` routing rule: an inbound message
+ * (after stripping any ad-platform preamble) that starts with `message` is
+ * routed to `agentId`. See `message-agent-resolver.ts`.
+ */
+export interface MessageAgentRule {
+  message: string;
+  agentId: string;
+}
+
 export interface GroupSettings {
   apiKey: string;
   insistences?: InsistenceEntry[];
@@ -39,6 +49,8 @@ export interface GroupSettings {
   // Per-group override for DROP_INBOUND_VIDEO. Present (boolean) overrides the
   // global default; undefined falls back to it.
   dropInboundVideo?: boolean;
+  // Prefix-match rules routing an inbound message to a specific agent id.
+  messageAgents?: MessageAgentRule[];
 }
 
 interface GroupResponse {
@@ -54,6 +66,7 @@ interface GroupResponse {
     ai_schedule?: unknown;
     debounce_ms?: unknown;
     drop_inbound_video?: unknown;
+    message_agents?: unknown;
     [key: string]: unknown;
   };
   [key: string]: unknown;
@@ -130,9 +143,7 @@ export class GroupFetcher {
           { jobId, locationId, status },
           'Group fetch returned 2xx with non-object body — non-retryable',
         );
-        throw new UnrecoverableError(
-          `Group fetch returned ${status} with non-object body`,
-        );
+        throw new UnrecoverableError(`Group fetch returned ${status} with non-object body`);
       }
       const body = response.data as GroupResponse;
       const apiKey = typeof body.api_key === 'string' ? body.api_key.trim() : '';
@@ -141,9 +152,7 @@ export class GroupFetcher {
           { jobId, locationId, status },
           'Group fetch returned 2xx without api_key — non-retryable',
         );
-        throw new UnrecoverableError(
-          `Group for location ${locationId} has no api_key`,
-        );
+        throw new UnrecoverableError(`Group for location ${locationId} has no api_key`);
       }
       const settings: GroupSettings = {
         apiKey,
@@ -157,6 +166,7 @@ export class GroupFetcher {
         aiSchedule: parseAiSchedule(body.general_settings?.ai_schedule),
         debounceMs: parseDebounceMs(body.general_settings?.debounce_ms),
         dropInboundVideo: parseDropInboundVideo(body.general_settings?.drop_inbound_video),
+        messageAgents: parseMessageAgents(body.general_settings?.message_agents),
       };
       if (this.cacheTtlMs > 0) {
         this.cache.set(locationId, {
@@ -226,6 +236,24 @@ function parseNonBlockingUsers(raw: unknown): NonBlockingUser[] | undefined {
     users.push({ id, name });
   }
   return users.length > 0 ? users : undefined;
+}
+
+// Prefix-match rules from `general_settings.message_agents`. Each entry needs
+// a non-blank `message` and `agent_id`; entries missing either are dropped.
+// Order is preserved — it determines match priority in
+// `resolveAgentForMessagePrefix`.
+function parseMessageAgents(raw: unknown): MessageAgentRule[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const rules: MessageAgentRule[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const r = entry as { message?: unknown; agent_id?: unknown };
+    const message = typeof r.message === 'string' ? r.message.trim() : '';
+    const agentId = typeof r.agent_id === 'string' ? r.agent_id.trim() : '';
+    if (!message || !agentId) continue;
+    rules.push({ message, agentId });
+  }
+  return rules.length > 0 ? rules : undefined;
 }
 
 function parseChannelAgents(raw: unknown): ChannelAgents | undefined {
