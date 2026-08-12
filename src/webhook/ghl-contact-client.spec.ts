@@ -15,7 +15,10 @@ const mockedAxios = axios as jest.Mocked<typeof axios>;
 function makeClient() {
   const get = jest.fn();
   const put = jest.fn();
-  mockedAxios.create.mockReturnValue({ get, put } as unknown as ReturnType<typeof axios.create>);
+  const post = jest.fn();
+  mockedAxios.create.mockReturnValue({ get, put, post } as unknown as ReturnType<
+    typeof axios.create
+  >);
 
   const env: Record<string, string | number> = {
     GHL_API_BASE_URL: 'https://services.example.com',
@@ -24,7 +27,7 @@ function makeClient() {
   };
   const config = { get: (k: string) => env[k] } as unknown as ConfigService<AppEnv, true>;
 
-  return { client: new GhlContactClient(config), get, put };
+  return { client: new GhlContactClient(config), get, put, post };
 }
 
 describe('GhlContactClient', () => {
@@ -344,6 +347,73 @@ describe('GhlContactClient', () => {
           apiKey: 'k',
           fields: [{ id: 'i', key: 'k', value: 'Disabled' }],
         })
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(Error);
+      expect(err).not.toBeInstanceOf(UnrecoverableError);
+      expect(err.message).toMatch(/ECONNREFUSED/);
+    });
+  });
+
+  describe('addTags', () => {
+    it('POSTs /contacts/:id/tags with bearer auth and the tags body', async () => {
+      const { client, post } = makeClient();
+      post.mockResolvedValue({ status: 200, data: { tags: ['desactivar ia'] } });
+
+      const result = await client.addTags({
+        jobId: 'job-1',
+        contactId: 'c_1',
+        apiKey: 'sk_xxx',
+        tags: ['desactivar ia'],
+      });
+
+      expect(post).toHaveBeenCalledWith(
+        '/contacts/c_1/tags',
+        { tags: ['desactivar ia'] },
+        { headers: { Authorization: 'Bearer sk_xxx' } },
+      );
+      expect(result.status).toBe(200);
+    });
+
+    it('encodes special characters in the contactId path segment', async () => {
+      const { client, post } = makeClient();
+      post.mockResolvedValue({ status: 200, data: {} });
+
+      await client.addTags({ jobId: 'j', contactId: 'c/with space', apiKey: 'k', tags: ['x'] });
+
+      expect(post.mock.calls[0][0]).toBe('/contacts/c%2Fwith%20space/tags');
+    });
+
+    it('throws UnrecoverableError on 4xx', async () => {
+      const { client, post } = makeClient();
+      post.mockResolvedValue({ status: 400, data: { error: 'bad' } });
+
+      await expect(
+        client.addTags({ jobId: 'job-1', contactId: 'c', apiKey: 'k', tags: ['x'] }),
+      ).rejects.toBeInstanceOf(UnrecoverableError);
+    });
+
+    it('throws a regular Error on 5xx (retryable)', async () => {
+      const { client, post } = makeClient();
+      post.mockResolvedValue({ status: 503, data: 'down' });
+
+      const err = await client
+        .addTags({ jobId: 'job-1', contactId: 'c', apiKey: 'k', tags: ['x'] })
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(Error);
+      expect(err).not.toBeInstanceOf(UnrecoverableError);
+      expect(err.message).toMatch(/503/);
+    });
+
+    it('throws a regular Error on transport failure (retryable)', async () => {
+      const { client, post } = makeClient();
+      const transport = new Error('connect ECONNREFUSED') as AxiosError;
+      transport.code = 'ECONNREFUSED';
+      post.mockRejectedValue(transport);
+
+      const err = await client
+        .addTags({ jobId: 'job-1', contactId: 'c', apiKey: 'k', tags: ['x'] })
         .catch((e) => e);
 
       expect(err).toBeInstanceOf(Error);

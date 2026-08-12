@@ -7,6 +7,7 @@ import { OutboundWebhookPayloadDto } from './dto/outbound-webhook-payload.dto';
 import { ContactFieldUpdate, GhlContactClient } from './ghl-contact-client';
 import { GroupFetcher } from './group-fetcher';
 import { InsistenceClient } from './insistence-client';
+import { AI_DISABLE_TAG } from './webhook.processor';
 import { WEBHOOK_REDIS_CLIENT } from './webhook.tokens';
 
 interface OutboundResponse {
@@ -14,6 +15,7 @@ interface OutboundResponse {
   updated?: boolean;
   deduplicated?: boolean;
   skipped?: 'nothing_to_update' | 'non_blocking_user';
+  tagged?: boolean;
 }
 
 @Controller({ path: 'webhook', version: ['1'] })
@@ -36,17 +38,23 @@ export class WebhookOutboundController {
   @Post('outbound')
   @HttpCode(HttpStatus.OK)
   async outbound(@Body() body: OutboundWebhookPayloadDto): Promise<OutboundResponse> {
+    // Live path, independent of the disabled block below: a delivered
+    // OutboundMessage whose body exactly matches the group's
+    // general_settings.stop_message tags the contact with AI_DISABLE_TAG.
+    const tagged = await this.handleStopMessage(body);
+
     // ────────────────────────────────────────────────────────────────────────
-    // ENDPOINT DISABLED (commented out, not deleted): the /outbound webhook now
-    // does NOTHING — it just acknowledges with `{ ok: true }`. The entire
-    // original body is preserved below for reference / future re-enable:
+    // ENDPOINT DISABLED (commented out, not deleted): everything else the
+    // /outbound webhook used to do stays off — it just acknowledges with
+    // `{ ok: true }`. The entire original body is preserved below for
+    // reference / future re-enable:
     //   • type/status filter, userId check, locationId/contactId validation
     //   • Redis idempotency guard
     //   • group fetch, non-blocking-user skip, insistence cancel
     //   • contact custom-field writes (AI disable + aiagent clear)
     // To re-enable, delete this early `return` and remove the comment markers.
     // ────────────────────────────────────────────────────────────────────────
-    return { ok: true };
+    return { ok: true, ...(tagged !== undefined ? { tagged } : {}) };
 
     /*
     this.logger.log(`outbound payload: ${JSON.stringify(body)}`);
@@ -185,6 +193,70 @@ export class WebhookOutboundController {
       throw err;
     }
     */
+  }
+
+  /**
+   * When a delivered `OutboundMessage`'s `body` exactly matches (trim +
+   * case-insensitive) the group's `general_settings.stop_message` — a manual
+   * "kill switch" phrase — tags the contact with `AI_DISABLE_TAG` so future
+   * inbound messages skip the AI (see the hard-stop check in
+   * `WebhookProcessor.process`). Applies to any outbound message, human or
+   * bot-sent — `userId` is not checked.
+   *
+   * Returns `undefined` when the payload doesn't qualify (wrong type/status,
+   * missing locationId/contactId/body, or the group has no stop_message
+   * configured) — the caller omits `tagged` from the response in that case.
+   * Returns `false` when it qualified but didn't match, or a downstream call
+   * failed in a way that was swallowed; `true` once the tag write succeeds.
+   * Best-effort: a misconfigured group (`UnrecoverableError`) is swallowed;
+   * a retryable Error propagates so GHL redelivers the webhook.
+   */
+  private async handleStopMessage(body: OutboundWebhookPayloadDto): Promise<boolean | undefined> {
+    if (body.type !== 'OutboundMessage' || body.status !== 'delivered') return undefined;
+
+    const locationId = body.locationId?.trim();
+    const contactId = body.contactId?.trim();
+    const text = body.body?.trim();
+    if (!locationId || !contactId || !text) return undefined;
+
+    const jobId = body.messageId ?? `${contactId}:${locationId}`;
+
+    let group;
+    try {
+      group = await this.groupFetcher.fetch(locationId, jobId);
+    } catch (err) {
+      if (err instanceof UnrecoverableError) {
+        this.logger.warn(
+          { jobId, contactId, err: err.message },
+          'stop_message: group fetch failed permanently — swallowed',
+        );
+        return false;
+      }
+      throw err;
+    }
+
+    if (!group.stopMessage) return undefined;
+    if (text.toLowerCase() !== group.stopMessage.toLowerCase()) return false;
+
+    try {
+      await this.contactClient.addTags({
+        jobId,
+        contactId,
+        apiKey: group.apiKey,
+        tags: [AI_DISABLE_TAG],
+      });
+      this.logger.log({ jobId, contactId, locationId }, 'stop_message matched — tagged contact');
+      return true;
+    } catch (err) {
+      if (err instanceof UnrecoverableError) {
+        this.logger.warn(
+          { jobId, contactId, err: err.message },
+          'stop_message: add-tags failed permanently — swallowed',
+        );
+        return false;
+      }
+      throw err;
+    }
   }
 
   /**

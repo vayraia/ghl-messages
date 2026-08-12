@@ -51,6 +51,9 @@ export interface GroupSettings {
   dropInboundVideo?: boolean;
   // Prefix-match rules routing an inbound message to a specific agent id.
   messageAgents?: MessageAgentRule[];
+  // Exact phrase (case/whitespace-insensitive) that, when it matches an
+  // outbound message body, tags the contact with "desactivar ia".
+  stopMessage?: string;
 }
 
 interface GroupResponse {
@@ -67,6 +70,7 @@ interface GroupResponse {
     debounce_ms?: unknown;
     drop_inbound_video?: unknown;
     message_agents?: unknown;
+    stop_message?: unknown;
     [key: string]: unknown;
   };
   [key: string]: unknown;
@@ -167,6 +171,7 @@ export class GroupFetcher {
         debounceMs: parseDebounceMs(body.general_settings?.debounce_ms),
         dropInboundVideo: parseDropInboundVideo(body.general_settings?.drop_inbound_video),
         messageAgents: parseMessageAgents(body.general_settings?.message_agents),
+        stopMessage: parseStopMessage(body.general_settings?.stop_message),
       };
       if (this.cacheTtlMs > 0) {
         this.cache.set(locationId, {
@@ -219,6 +224,12 @@ function parseDropInboundVideo(raw: unknown): boolean | undefined {
 }
 
 function parseWhatsappNumberId(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function parseStopMessage(raw: unknown): string | undefined {
   if (typeof raw !== 'string') return undefined;
   const trimmed = raw.trim();
   return trimmed.length > 0 ? trimmed : undefined;

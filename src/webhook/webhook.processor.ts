@@ -35,7 +35,7 @@ const CHAT_MESSAGE_DELAY_MS = 2500;
  * tag, the flush is skipped entirely (no agent resolution, no forward). Matched
  * case-insensitively against the contact's normalized tags.
  */
-const AI_DISABLE_TAG = 'desactivar ia';
+export const AI_DISABLE_TAG = 'desactivar ia';
 
 export interface FlushResult {
   ok: true;

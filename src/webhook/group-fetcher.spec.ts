@@ -640,6 +640,40 @@ describe('GroupFetcher', () => {
     });
   });
 
+  describe('stop_message', () => {
+    it('parses a non-blank stop_message', async () => {
+      const { fetcher, get } = makeFetcher();
+      get.mockResolvedValue({
+        status: 200,
+        data: { api_key: 'sk', general_settings: { stop_message: '  STOP BOT  ' } },
+      });
+
+      expect((await fetcher.fetch('loc_abc', 'job-1')).stopMessage).toBe('STOP BOT');
+    });
+
+    it('returns stopMessage=undefined when missing, blank, or non-string', async () => {
+      const { fetcher, get } = makeFetcher();
+
+      get.mockResolvedValue({
+        status: 200,
+        data: { api_key: 'sk', general_settings: {} },
+      });
+      expect((await fetcher.fetch('loc_abc', 'job-1')).stopMessage).toBeUndefined();
+
+      get.mockResolvedValue({
+        status: 200,
+        data: { api_key: 'sk', general_settings: { stop_message: '   ' } },
+      });
+      expect((await fetcher.fetch('loc_abc', 'job-1')).stopMessage).toBeUndefined();
+
+      get.mockResolvedValue({
+        status: 200,
+        data: { api_key: 'sk', general_settings: { stop_message: 42 } },
+      });
+      expect((await fetcher.fetch('loc_abc', 'job-1')).stopMessage).toBeUndefined();
+    });
+  });
+
   describe('in-memory cache (GROUP_CACHE_TTL_MS)', () => {
     it('serves a second fetch from cache without a new HTTP call', async () => {
       const { fetcher, get } = makeFetcher({ GROUP_CACHE_TTL_MS: 60_000 });

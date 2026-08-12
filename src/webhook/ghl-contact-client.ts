@@ -27,6 +27,18 @@ export interface UpdateContactFieldsResult {
   durationMs: number;
 }
 
+export interface AddTagsInput {
+  jobId: string;
+  contactId: string;
+  apiKey: string;
+  tags: string[];
+}
+
+export interface AddTagsResult {
+  status: number;
+  durationMs: number;
+}
+
 export interface GetContactInput {
   jobId: string;
   contactId: string;
@@ -399,6 +411,61 @@ export class GhlContactClient {
       'GHL contact update errored — retryable',
     );
     throw new Error(`GHL contact update returned ${status}: ${summary}`);
+  }
+
+  /**
+   * Adds one or more tags to a contact via `POST /contacts/:id/tags`. Adding a
+   * tag the contact already has is a no-op on GHL's side, so this call is
+   * idempotent — safe to retry or to receive from a redelivered webhook.
+   * Same retry-split convention as the other writes: 2xx success, 4xx
+   * `UnrecoverableError`, 5xx/network `Error` (retryable).
+   */
+  async addTags(input: AddTagsInput): Promise<AddTagsResult> {
+    const path = `/contacts/${encodeURIComponent(input.contactId)}/tags`;
+    const started = Date.now();
+    let response;
+    try {
+      response = await this.client.post(
+        path,
+        { tags: input.tags },
+        { headers: { Authorization: `Bearer ${input.apiKey}` } },
+      );
+    } catch (err) {
+      const axiosErr = err as AxiosError;
+      const code = axiosErr.code ?? 'UNKNOWN';
+      this.logger.warn(
+        { jobId: input.jobId, contactId: input.contactId, code, msg: axiosErr.message },
+        'Contact add-tags transport error',
+      );
+      throw new Error(`Contact add-tags transport error (${code}): ${axiosErr.message}`);
+    }
+
+    const durationMs = Date.now() - started;
+    const { status } = response;
+
+    if (status >= 200 && status < 300) {
+      this.logger.log(
+        { jobId: input.jobId, contactId: input.contactId, status, durationMs, tags: input.tags },
+        'GHL contact add-tags accepted',
+      );
+      return { status, durationMs };
+    }
+
+    const summary = summarizeBody(response.data);
+
+    if (status >= 400 && status < 500) {
+      this.logger.warn(
+        { jobId: input.jobId, contactId: input.contactId, status, durationMs, body: summary },
+        'Contact add-tags rejected — non-retryable',
+      );
+      throw new UnrecoverableError(`Contact add-tags rejected with ${status}: ${summary}`);
+    }
+
+    this.logger.warn(
+      { jobId: input.jobId, contactId: input.contactId, status, durationMs, body: summary },
+      'Contact add-tags errored — retryable',
+    );
+    throw new Error(`Contact add-tags returned ${status}: ${summary}`);
   }
 }
 
