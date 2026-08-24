@@ -58,6 +58,16 @@ function payload(over: Partial<OutboundWebhookPayloadDto> = {}): OutboundWebhook
   };
 }
 
+// `handleStopMessage` does the actual group fetch + tag write; `outbound()`
+// only acks immediately and fires it off in the background (see the
+// "immediate ack" describe block below). stop_message tests call the
+// private method directly so they can await and assert on its outcome
+// deterministically, without racing the fire-and-forget wrapper.
+interface TestableController {
+  outbound(body: OutboundWebhookPayloadDto): { ok: true };
+  handleStopMessage(body: OutboundWebhookPayloadDto): Promise<boolean | undefined>;
+}
+
 describe('WebhookOutboundController', () => {
   it('skips with 200 when type is not OutboundMessage', async () => {
     const { controller, groupFetcher, insistenceClient } = makeController();
@@ -372,13 +382,38 @@ describe('WebhookOutboundController', () => {
     });
   });
 
-  describe('stop_message tag', () => {
+  describe('immediate ack', () => {
+    it('outbound() acks { ok: true } synchronously, before any processing runs', () => {
+      const { controller, groupFetcher } = makeController();
+      // fetch() never resolves in this test — if outbound() awaited it, this
+      // test would hang. It doesn't, so the ack still returns.
+      groupFetcher.fetch.mockReturnValue(new Promise(() => {}));
+      const r = (controller as unknown as TestableController).outbound(
+        payload({ body: 'STOP BOT' }),
+      );
+      expect(r).toEqual({ ok: true });
+    });
+
+    it('still acks { ok: true } when the background processing throws (retryable error)', () => {
+      const { controller, groupFetcher } = makeController();
+      groupFetcher.fetch.mockRejectedValue(new Error('upstream 503'));
+      const testable = controller as unknown as TestableController;
+      expect(() => testable.outbound(payload({ body: 'STOP BOT' }))).not.toThrow();
+      expect(testable.outbound(payload({ body: 'STOP BOT' }))).toEqual({ ok: true });
+    });
+  });
+
+  describe('stop_message tag (handleStopMessage)', () => {
     // The disabled legacy block requires userId; the new stop_message check
     // does not, so these tests explicitly omit it where relevant.
     function deliveredPayload(
       over: Partial<OutboundWebhookPayloadDto> = {},
     ): OutboundWebhookPayloadDto {
       return payload({ userId: undefined, body: 'STOP BOT', ...over });
+    }
+
+    function testable(controller: unknown): TestableController {
+      return controller as unknown as TestableController;
     }
 
     it('tags the contact when body matches stop_message exactly', async () => {
@@ -389,7 +424,7 @@ describe('WebhookOutboundController', () => {
       } satisfies GroupSettings);
       updater.addTags.mockResolvedValue({ status: 200, durationMs: 5 });
 
-      const r = await controller.outbound(deliveredPayload());
+      const tagged = await testable(controller).handleStopMessage(deliveredPayload());
 
       expect(groupFetcher.fetch).toHaveBeenCalledWith('loc_1', 'm_1');
       expect(updater.addTags).toHaveBeenCalledWith({
@@ -398,7 +433,7 @@ describe('WebhookOutboundController', () => {
         apiKey: 'sk_xxx',
         tags: ['desactivar ia'],
       });
-      expect(r).toEqual({ ok: true, tagged: true });
+      expect(tagged).toBe(true);
     });
 
     it('matches case-insensitively and ignoring surrounding whitespace', async () => {
@@ -409,12 +444,14 @@ describe('WebhookOutboundController', () => {
       } satisfies GroupSettings);
       updater.addTags.mockResolvedValue({ status: 200, durationMs: 1 });
 
-      const r = await controller.outbound(deliveredPayload({ body: '  stop bot  ' }));
+      const tagged = await testable(controller).handleStopMessage(
+        deliveredPayload({ body: '  stop bot  ' }),
+      );
 
       expect(updater.addTags).toHaveBeenCalledWith(
         expect.objectContaining({ tags: ['desactivar ia'] }),
       );
-      expect(r).toEqual({ ok: true, tagged: true });
+      expect(tagged).toBe(true);
     });
 
     it('applies to a bot-sent message too (no userId required)', async () => {
@@ -425,10 +462,12 @@ describe('WebhookOutboundController', () => {
       } satisfies GroupSettings);
       updater.addTags.mockResolvedValue({ status: 200, durationMs: 1 });
 
-      const r = await controller.outbound(deliveredPayload({ userId: undefined }));
+      const tagged = await testable(controller).handleStopMessage(
+        deliveredPayload({ userId: undefined }),
+      );
 
       expect(updater.addTags).toHaveBeenCalled();
-      expect(r).toEqual({ ok: true, tagged: true });
+      expect(tagged).toBe(true);
     });
 
     it('does not tag when body does not match stop_message', async () => {
@@ -438,70 +477,80 @@ describe('WebhookOutboundController', () => {
         stopMessage: 'STOP BOT',
       } satisfies GroupSettings);
 
-      const r = await controller.outbound(deliveredPayload({ body: 'This is a test message' }));
+      const tagged = await testable(controller).handleStopMessage(
+        deliveredPayload({ body: 'This is a test message' }),
+      );
 
       expect(updater.addTags).not.toHaveBeenCalled();
-      expect(r).toEqual({ ok: true, tagged: false });
+      expect(tagged).toBe(false);
     });
 
     it('does not tag when the group has no stop_message configured', async () => {
       const { controller, groupFetcher, updater } = makeController();
       groupFetcher.fetch.mockResolvedValue({ apiKey: 'sk' } satisfies GroupSettings);
 
-      const r = await controller.outbound(deliveredPayload());
+      const tagged = await testable(controller).handleStopMessage(deliveredPayload());
 
       expect(updater.addTags).not.toHaveBeenCalled();
-      expect(r).toEqual({ ok: true });
+      expect(tagged).toBeUndefined();
     });
 
     it('does not fetch the group or tag when body is missing', async () => {
       const { controller, groupFetcher, updater } = makeController();
 
-      const r = await controller.outbound(deliveredPayload({ body: undefined }));
+      const tagged = await testable(controller).handleStopMessage(
+        deliveredPayload({ body: undefined }),
+      );
 
       expect(groupFetcher.fetch).not.toHaveBeenCalled();
       expect(updater.addTags).not.toHaveBeenCalled();
-      expect(r).toEqual({ ok: true });
+      expect(tagged).toBeUndefined();
     });
 
     it('does not fetch the group or tag when type is not OutboundMessage', async () => {
       const { controller, groupFetcher, updater } = makeController();
 
-      const r = await controller.outbound(deliveredPayload({ type: 'InboundMessage' }));
+      const tagged = await testable(controller).handleStopMessage(
+        deliveredPayload({ type: 'InboundMessage' }),
+      );
 
       expect(groupFetcher.fetch).not.toHaveBeenCalled();
       expect(updater.addTags).not.toHaveBeenCalled();
-      expect(r).toEqual({ ok: true });
+      expect(tagged).toBeUndefined();
     });
 
     it('does not fetch the group or tag when status is not delivered', async () => {
       const { controller, groupFetcher, updater } = makeController();
 
-      const r = await controller.outbound(deliveredPayload({ status: 'sent' }));
+      const tagged = await testable(controller).handleStopMessage(
+        deliveredPayload({ status: 'sent' }),
+      );
 
       expect(groupFetcher.fetch).not.toHaveBeenCalled();
       expect(updater.addTags).not.toHaveBeenCalled();
-      expect(r).toEqual({ ok: true });
+      expect(tagged).toBeUndefined();
     });
 
-    it('swallows UnrecoverableError from the group fetch and returns ok=true', async () => {
+    it('swallows UnrecoverableError from the group fetch and returns false', async () => {
       const { controller, groupFetcher, updater } = makeController();
       groupFetcher.fetch.mockRejectedValue(new UnrecoverableError('bad config'));
 
-      const r = await controller.outbound(deliveredPayload());
+      const tagged = await testable(controller).handleStopMessage(deliveredPayload());
 
       expect(updater.addTags).not.toHaveBeenCalled();
-      expect(r).toEqual({ ok: true, tagged: false });
+      expect(tagged).toBe(false);
     });
 
-    it('re-throws a retryable Error from the group fetch so GHL retries the webhook', async () => {
+    it('re-throws a retryable Error from the group fetch (caught by the background .catch in outbound())', async () => {
       const { controller, groupFetcher } = makeController();
       groupFetcher.fetch.mockRejectedValue(new Error('upstream 503'));
 
-      await expect(controller.outbound(deliveredPayload())).rejects.toThrow('upstream 503');
+      await expect(testable(controller).handleStopMessage(deliveredPayload())).rejects.toThrow(
+        'upstream 503',
+      );
     });
 
-    it('swallows UnrecoverableError from addTags and returns ok=true, tagged=false', async () => {
+    it('swallows UnrecoverableError from addTags and returns false', async () => {
       const { controller, groupFetcher, updater } = makeController();
       groupFetcher.fetch.mockResolvedValue({
         apiKey: 'sk',
@@ -509,12 +558,12 @@ describe('WebhookOutboundController', () => {
       } satisfies GroupSettings);
       updater.addTags.mockRejectedValue(new UnrecoverableError('400 bad'));
 
-      const r = await controller.outbound(deliveredPayload());
+      const tagged = await testable(controller).handleStopMessage(deliveredPayload());
 
-      expect(r).toEqual({ ok: true, tagged: false });
+      expect(tagged).toBe(false);
     });
 
-    it('re-throws a retryable Error from addTags so GHL retries the webhook', async () => {
+    it('re-throws a retryable Error from addTags (caught by the background .catch in outbound())', async () => {
       const { controller, groupFetcher, updater } = makeController();
       groupFetcher.fetch.mockResolvedValue({
         apiKey: 'sk',
@@ -522,7 +571,9 @@ describe('WebhookOutboundController', () => {
       } satisfies GroupSettings);
       updater.addTags.mockRejectedValue(new Error('upstream 503'));
 
-      await expect(controller.outbound(deliveredPayload())).rejects.toThrow('upstream 503');
+      await expect(testable(controller).handleStopMessage(deliveredPayload())).rejects.toThrow(
+        'upstream 503',
+      );
     });
 
     it('uses messageId as jobId when present, otherwise contactId:locationId', async () => {
@@ -533,7 +584,7 @@ describe('WebhookOutboundController', () => {
       } satisfies GroupSettings);
       updater.addTags.mockResolvedValue({ status: 200, durationMs: 1 });
 
-      await controller.outbound(deliveredPayload({ messageId: undefined }));
+      await testable(controller).handleStopMessage(deliveredPayload({ messageId: undefined }));
 
       expect(groupFetcher.fetch).toHaveBeenCalledWith('loc_1', 'c_1:loc_1');
       expect(updater.addTags).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'c_1:loc_1' }));

@@ -9,7 +9,11 @@ import { GroupFetcher } from './group-fetcher';
 import { MessageDebouncer } from './message-debouncer';
 import { WEBHOOK_REDIS_CLIENT } from './webhook.tokens';
 
-interface InboundResponse {
+interface InboundAck {
+  ok: true;
+}
+
+interface InboundOutcome {
   ok: true;
   jobId?: string;
   debounced?: boolean;
@@ -45,10 +49,46 @@ export class WebhookInboundController {
 
   @Post('inbound')
   @HttpCode(HttpStatus.OK)
-  async inbound(
-    @Body() body: InboundMessagePayloadDto,
-    @Req() req?: Request,
-  ): Promise<InboundResponse> {
+  inbound(@Body() body: InboundMessagePayloadDto, @Req() req?: Request): InboundAck {
+    // Ack GHL immediately, before any Redis/network I/O — GHL only reads the
+    // status code (never the body) to decide whether to retry or eventually
+    // disable the subscription, so there is nothing to gain by making it wait
+    // on our own processing. Real work continues below, off the request; its
+    // outcome (skip reason, dedup, jobId, or a hard failure) is only ever
+    // visible in our own logs now, never in the response GHL sees.
+    this.handleInbound(body, req)
+      .then((outcome) => {
+        if (outcome.skipped || outcome.deduplicated) {
+          this.logger.debug(
+            {
+              locationId: body.locationId,
+              contactId: body.contactId,
+              messageId: body.messageId,
+              ...outcome,
+            },
+            'inbound processed (post-ack)',
+          );
+        }
+      })
+      .catch((err) => {
+        this.logger.error(
+          {
+            locationId: body.locationId,
+            contactId: body.contactId,
+            messageId: body.messageId,
+            err: (err as Error).message,
+          },
+          'inbound webhook processing failed (post-ack) — message dropped',
+        );
+      });
+
+    return { ok: true };
+  }
+
+  private async handleInbound(
+    body: InboundMessagePayloadDto,
+    req?: Request,
+  ): Promise<InboundOutcome> {
     // Debug-only: log the FULL raw inbound payload (before whitelist stripping)
     // at INFO so it is visible regardless of log level. `req.body` is the
     // untransformed JSON parsed by body-parser, so it keeps every field the

@@ -10,12 +10,8 @@ import { InsistenceClient } from './insistence-client';
 import { AI_DISABLE_TAG } from './webhook.processor';
 import { WEBHOOK_REDIS_CLIENT } from './webhook.tokens';
 
-interface OutboundResponse {
+interface OutboundAck {
   ok: true;
-  updated?: boolean;
-  deduplicated?: boolean;
-  skipped?: 'nothing_to_update' | 'non_blocking_user';
-  tagged?: boolean;
 }
 
 @Controller({ path: 'webhook', version: ['1'] })
@@ -37,11 +33,41 @@ export class WebhookOutboundController {
 
   @Post('outbound')
   @HttpCode(HttpStatus.OK)
-  async outbound(@Body() body: OutboundWebhookPayloadDto): Promise<OutboundResponse> {
-    // Live path, independent of the disabled block below: a delivered
-    // OutboundMessage whose body exactly matches the group's
-    // general_settings.stop_message tags the contact with AI_DISABLE_TAG.
-    const tagged = await this.handleStopMessage(body);
+  outbound(@Body() body: OutboundWebhookPayloadDto): OutboundAck {
+    // Ack GHL immediately, before any Redis/network I/O — same reasoning as
+    // WebhookInboundController.inbound(): GHL only reads the status code to
+    // decide whether to retry / eventually disable the subscription, so
+    // there is nothing to gain by making it wait on the group fetch + tag
+    // write below. Live path, independent of the disabled block further
+    // down: a delivered OutboundMessage whose body exactly matches the
+    // group's general_settings.stop_message tags the contact with
+    // AI_DISABLE_TAG. Its outcome (tagged / skipped / failed) is only ever
+    // visible in our own logs now, never in the response GHL sees.
+    this.handleStopMessage(body)
+      .then((tagged) => {
+        if (tagged !== undefined) {
+          this.logger.debug(
+            {
+              locationId: body.locationId,
+              contactId: body.contactId,
+              messageId: body.messageId,
+              tagged,
+            },
+            'outbound processed (post-ack)',
+          );
+        }
+      })
+      .catch((err) => {
+        this.logger.error(
+          {
+            locationId: body.locationId,
+            contactId: body.contactId,
+            messageId: body.messageId,
+            err: (err as Error).message,
+          },
+          'outbound webhook processing failed (post-ack)',
+        );
+      });
 
     // ────────────────────────────────────────────────────────────────────────
     // ENDPOINT DISABLED (commented out, not deleted): everything else the
@@ -54,7 +80,7 @@ export class WebhookOutboundController {
     //   • contact custom-field writes (AI disable + aiagent clear)
     // To re-enable, delete this early `return` and remove the comment markers.
     // ────────────────────────────────────────────────────────────────────────
-    return { ok: true, ...(tagged !== undefined ? { tagged } : {}) };
+    return { ok: true };
 
     /*
     this.logger.log(`outbound payload: ${JSON.stringify(body)}`);
