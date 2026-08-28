@@ -189,6 +189,13 @@ export class GhlContactClient {
     const summary = summarizeBody(response.data);
 
     if (status >= 400 && status < 500) {
+      if (isGhlInternalTimeout(status, response.data)) {
+        this.logger.warn(
+          { jobId: input.jobId, contactId: input.contactId, status, durationMs, body: summary },
+          'GHL contact read timed out internally — retryable',
+        );
+        throw new Error(`GHL contact read timed out internally (${status}): ${summary}`);
+      }
       this.logger.warn(
         { jobId: input.jobId, contactId: input.contactId, status, durationMs, body: summary },
         'GHL contact read rejected — non-retryable',
@@ -272,6 +279,13 @@ export class GhlContactClient {
     const summary = summarizeBody(response.data);
 
     if (status >= 400 && status < 500) {
+      if (isGhlInternalTimeout(status, response.data)) {
+        this.logger.warn(
+          { jobId: input.jobId, locationId: input.locationId, status, durationMs, body: summary },
+          'GHL custom fields read timed out internally — retryable',
+        );
+        throw new Error(`GHL custom fields read timed out internally (${status}): ${summary}`);
+      }
       this.logger.warn(
         { jobId: input.jobId, locationId: input.locationId, status, durationMs, body: summary },
         'GHL custom fields read rejected — non-retryable',
@@ -339,6 +353,13 @@ export class GhlContactClient {
     const summary = summarizeBody(response.data);
 
     if (status >= 400 && status < 500) {
+      if (isGhlInternalTimeout(status, response.data)) {
+        this.logger.warn(
+          { jobId: input.jobId, userId: input.userId, status, durationMs, body: summary },
+          'GHL user read timed out internally — retryable',
+        );
+        throw new Error(`GHL user read timed out internally (${status}): ${summary}`);
+      }
       this.logger.warn(
         { jobId: input.jobId, userId: input.userId, status, durationMs, body: summary },
         'GHL user read rejected — non-retryable',
@@ -399,6 +420,13 @@ export class GhlContactClient {
     const summary = summarizeBody(response.data);
 
     if (status >= 400 && status < 500) {
+      if (isGhlInternalTimeout(status, response.data)) {
+        this.logger.warn(
+          { jobId: input.jobId, contactId: input.contactId, status, durationMs, body: summary },
+          'GHL contact update timed out internally — retryable',
+        );
+        throw new Error(`GHL contact update timed out internally (${status}): ${summary}`);
+      }
       this.logger.warn(
         { jobId: input.jobId, contactId: input.contactId, status, durationMs, body: summary },
         'GHL contact update rejected — non-retryable',
@@ -454,6 +482,13 @@ export class GhlContactClient {
     const summary = summarizeBody(response.data);
 
     if (status >= 400 && status < 500) {
+      if (isGhlInternalTimeout(status, response.data)) {
+        this.logger.warn(
+          { jobId: input.jobId, contactId: input.contactId, status, durationMs, body: summary },
+          'Contact add-tags timed out internally — retryable',
+        );
+        throw new Error(`Contact add-tags timed out internally (${status}): ${summary}`);
+      }
       this.logger.warn(
         { jobId: input.jobId, contactId: input.contactId, status, durationMs, body: summary },
         'Contact add-tags rejected — non-retryable',
@@ -728,6 +763,18 @@ function normalizeFieldValue(value: unknown): string | undefined {
 function summarizeBody(body: unknown): string {
   const s = typeof body === 'string' ? body : safeStringify(body);
   return s.length > 500 ? `${s.slice(0, 500)}…` : s;
+}
+
+/**
+ * GHL sometimes answers with `401 {"message":"Command timed out"}` when its
+ * own backend times out processing the request — not an actual auth failure.
+ * The rest of the 4xx range is treated as permanent misconfig, but this exact
+ * shape must be retried like a 5xx or it silently drops the job.
+ */
+function isGhlInternalTimeout(status: number, body: unknown): boolean {
+  if (status !== 401 || !body || typeof body !== 'object') return false;
+  const message = (body as { message?: unknown }).message;
+  return typeof message === 'string' && message.toLowerCase().includes('command timed out');
 }
 
 function safeStringify(v: unknown): string {

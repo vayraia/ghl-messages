@@ -260,6 +260,17 @@ describe('GhlContactClient', () => {
       expect(err.message).toMatch(/503/);
     });
 
+    it('throws a regular Error on a 401 "Command timed out" body (retryable, not a real auth failure)', async () => {
+      const { client, get } = makeClient();
+      get.mockResolvedValue({ status: 401, data: { statusCode: 401, message: 'Command timed out' } });
+
+      const err = await client.get({ jobId: 'j', contactId: 'c', apiKey: 'k' }).catch((e) => e);
+
+      expect(err).toBeInstanceOf(Error);
+      expect(err).not.toBeInstanceOf(UnrecoverableError);
+      expect(err.message).toMatch(/timed out internally/);
+    });
+
     it('throws a regular Error on transport failure (retryable)', async () => {
       const { client, get } = makeClient();
       const transport = new Error('connect ETIMEDOUT') as AxiosError;
