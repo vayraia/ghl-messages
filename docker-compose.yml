@@ -43,6 +43,8 @@ services:
       api:
         condition: service_started
     command: ["node", "dist/worker.js"]
+    healthcheck:
+      disable: true
 
 volumes:
   redis-data:

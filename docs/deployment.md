@@ -29,8 +29,13 @@ For the worker:
 ```bash
 docker run --rm \
   --env-file .env \
+  --no-healthcheck \
   go-high-level:local node dist/worker.js
 ```
+
+> The image bakes an HTTP `HEALTHCHECK` for the `api` process — the worker
+> has no HTTP listener, so pass `--no-healthcheck` (or it reports
+> unhealthy forever).
 
 ## Docker Compose (recommended for single-host deploys)
 
