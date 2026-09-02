@@ -1,6 +1,7 @@
-import { Body, Controller, HttpCode, HttpStatus, Inject, Logger, Post } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Inject, Logger, Post, Req } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { UnrecoverableError } from 'bullmq';
+import type { Request } from 'express';
 import { Redis } from 'ioredis';
 import { AppEnv } from '../config/env.validation';
 import { OutboundWebhookPayloadDto } from './dto/outbound-webhook-payload.dto';
@@ -19,6 +20,7 @@ export class WebhookOutboundController {
   private readonly logger = new Logger(WebhookOutboundController.name);
   private readonly idempotencyTtlSeconds: number;
   private readonly agentFieldKey: string;
+  private readonly logRawOutbound: boolean;
 
   constructor(
     private readonly groupFetcher: GroupFetcher,
@@ -29,11 +31,20 @@ export class WebhookOutboundController {
   ) {
     this.idempotencyTtlSeconds = config.get('IDEMPOTENCY_TTL_SECONDS', { infer: true });
     this.agentFieldKey = config.get('AGENT_FIELD_KEY', { infer: true });
+    this.logRawOutbound = config.get('LOG_OUTBOUND_RAW', { infer: true });
   }
 
   @Post('outbound')
   @HttpCode(HttpStatus.OK)
-  outbound(@Body() body: OutboundWebhookPayloadDto): OutboundAck {
+  outbound(@Body() body: OutboundWebhookPayloadDto, @Req() req?: Request): OutboundAck {
+    // Debug-only: log the FULL raw outbound payload (before whitelist
+    // stripping) at INFO so it is visible regardless of log level. Gated
+    // behind LOG_OUTBOUND_RAW because it is verbose — keep it off in normal
+    // operation. Same pattern as WebhookInboundController.inbound().
+    if (this.logRawOutbound) {
+      this.logger.log({ rawBody: req?.body as unknown }, 'outbound webhook raw payload');
+    }
+
     // Ack GHL immediately, before any Redis/network I/O — same reasoning as
     // WebhookInboundController.inbound(): GHL only reads the status code to
     // decide whether to retry / eventually disable the subscription, so
@@ -262,7 +273,7 @@ export class WebhookOutboundController {
     }
 
     if (!group.stopMessage) return undefined;
-    if (text.toLowerCase() !== group.stopMessage.toLowerCase()) return false;
+    if (text.toLowerCase() !== group.stopMessage.trim().toLowerCase()) return false;
 
     try {
       await this.contactClient.addTags({

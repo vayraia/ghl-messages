@@ -84,6 +84,9 @@ export interface AppEnv {
   // so keep it off in normal operation and only flip on to capture samples.
   LOG_INBOUND_RAW: boolean;
 
+  // Same as LOG_INBOUND_RAW but for POST /webhook/v1/outbound.
+  LOG_OUTBOUND_RAW: boolean;
+
   // When true (default), an inbound flush whose attachments include a video is
   // dropped in full (text included) before being forwarded to the AI. GHL's
   // payload can't distinguish a video from an audio (both arrive as a `.mp4`
@@ -182,6 +185,7 @@ export const envValidationSchema = Joi.object<AppEnv, true>({
   INBOUND_MAX_AGE_SECONDS: Joi.number().integer().min(0).default(0),
 
   LOG_INBOUND_RAW: Joi.boolean().default(false),
+  LOG_OUTBOUND_RAW: Joi.boolean().default(false),
 
   DROP_INBOUND_VIDEO: Joi.boolean().default(true),
   MEDIA_HEAD_TIMEOUT_MS: Joi.number().integer().min(100).default(5000),
