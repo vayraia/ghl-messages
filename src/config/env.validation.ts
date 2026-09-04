@@ -65,6 +65,12 @@ export interface AppEnv {
   GHL_API_VERSION: string;
   GHL_API_TIMEOUT_MS: number;
 
+  // Point retry for a single GhlReply.send() call (the reply-to-contact send,
+  // not the whole webhook job). Retries only transport errors and 5xx —
+  // 4xx stays an immediate UnrecoverableError. 1 = no retry.
+  GHL_REPLY_MAX_ATTEMPTS: number;
+  GHL_REPLY_RETRY_DELAY_MS: number;
+
   // fieldKey of the contact custom field whose value, when set, overrides the
   // inbound agent_id (takes precedence over channel_agents / default_agent).
   AGENT_FIELD_KEY: string;
@@ -176,6 +182,8 @@ export const envValidationSchema = Joi.object<AppEnv, true>({
     .default('https://services.leadconnectorhq.com'),
   GHL_API_VERSION: Joi.string().default('2021-07-28'),
   GHL_API_TIMEOUT_MS: Joi.number().integer().min(100).default(10_000),
+  GHL_REPLY_MAX_ATTEMPTS: Joi.number().integer().min(1).default(3),
+  GHL_REPLY_RETRY_DELAY_MS: Joi.number().integer().min(0).default(500),
 
   AGENT_FIELD_KEY: Joi.string().default('contact.aiagent'),
 

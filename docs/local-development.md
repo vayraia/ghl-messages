@@ -74,6 +74,10 @@ GHL_API_KEY=replace-with-your-ghl-pat
 GHL_API_BASE_URL=https://services.leadconnectorhq.com
 GHL_API_VERSION=2021-07-28
 GHL_API_TIMEOUT_MS=10000
+# Point retry for a single reply send (transport errors / 5xx only; 4xx never
+# retries). 1 = no retry.
+GHL_REPLY_MAX_ATTEMPTS=3
+GHL_REPLY_RETRY_DELAY_MS=500
 ```
 
 Boot fails fast on a missing or weak secret — the schema requires

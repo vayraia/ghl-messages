@@ -22,6 +22,8 @@ function makeGhl(overrides: Partial<Record<keyof AppEnv, string | number>> = {})
     GHL_API_BASE_URL: 'https://services.leadconnectorhq.com',
     GHL_API_VERSION: '2021-07-28',
     GHL_API_TIMEOUT_MS: 5000,
+    GHL_REPLY_MAX_ATTEMPTS: 1,
+    GHL_REPLY_RETRY_DELAY_MS: 0,
     ...overrides,
   };
   const config = {
@@ -316,5 +318,56 @@ describe('GhlReply', () => {
     const err = await ghl.send(baseInput).catch((e) => e);
     expect(err).toBeInstanceOf(Error);
     expect(err).not.toBeInstanceOf(UnrecoverableError);
+  });
+
+  describe('point retry', () => {
+    it('retries a transport failure and succeeds on a later attempt', async () => {
+      const { ghl, post } = makeGhl({ GHL_REPLY_MAX_ATTEMPTS: 3 });
+      const transportErr = new Error('ETIMEDOUT') as AxiosError;
+      transportErr.code = 'ETIMEDOUT';
+      post
+        .mockRejectedValueOnce(transportErr)
+        .mockResolvedValueOnce({ status: 201, data: { ok: true } });
+
+      const result = await ghl.send(baseInput);
+
+      expect(post).toHaveBeenCalledTimes(2);
+      expect(result.status).toBe(201);
+    });
+
+    it('retries a 5xx and succeeds on a later attempt', async () => {
+      const { ghl, post } = makeGhl({ GHL_REPLY_MAX_ATTEMPTS: 3 });
+      post
+        .mockResolvedValueOnce({ status: 502, data: 'bad gateway' })
+        .mockResolvedValueOnce({ status: 201, data: { ok: true } });
+
+      const result = await ghl.send(baseInput);
+
+      expect(post).toHaveBeenCalledTimes(2);
+      expect(result.status).toBe(201);
+    });
+
+    it('gives up after GHL_REPLY_MAX_ATTEMPTS and throws the last error', async () => {
+      const { ghl, post } = makeGhl({ GHL_REPLY_MAX_ATTEMPTS: 3 });
+      const transportErr = new Error('ETIMEDOUT') as AxiosError;
+      transportErr.code = 'ETIMEDOUT';
+      post.mockRejectedValue(transportErr);
+
+      const err = await ghl.send(baseInput).catch((e) => e);
+
+      expect(post).toHaveBeenCalledTimes(3);
+      expect(err).toBeInstanceOf(Error);
+      expect(err).not.toBeInstanceOf(UnrecoverableError);
+    });
+
+    it('does not retry a 4xx — throws UnrecoverableError on the first attempt', async () => {
+      const { ghl, post } = makeGhl({ GHL_REPLY_MAX_ATTEMPTS: 3 });
+      post.mockResolvedValue({ status: 401, data: { error: 'unauthorized' } });
+
+      const err = await ghl.send({ ...baseInput, type: 'IG' }).catch((e) => e);
+
+      expect(post).toHaveBeenCalledTimes(1);
+      expect(err).toBeInstanceOf(UnrecoverableError);
+    });
   });
 });

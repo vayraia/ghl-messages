@@ -41,16 +41,29 @@ export interface GhlReplyResult {
  * Sends the AI's reply to the contact via GHL's
  * `POST /conversations/messages` endpoint, using the same retry-split
  * convention as the chat forwarder so BullMQ owns the retry policy.
+ *
+ * On top of that, `send()` does a point retry of its own: transport errors
+ * and 5xx are retried up to `GHL_REPLY_MAX_ATTEMPTS` times (with a fixed
+ * delay between attempts) before giving up and throwing. This exists because
+ * webhook.processor swallows a mid-sequence send failure to avoid BullMQ
+ * re-sending already-delivered messages — without a retry here, a single
+ * transient timeout on the only message in a batch drops the reply (and its
+ * insistence follow-up) with no second chance. 4xx still throws
+ * `UnrecoverableError` immediately, unretried.
  */
 @Injectable()
 export class GhlReply {
   private readonly logger = new Logger(GhlReply.name);
   private readonly client: AxiosInstance;
+  private readonly maxAttempts: number;
+  private readonly retryDelayMs: number;
 
   constructor(config: ConfigService<AppEnv, true>) {
     const baseURL: string = config.get('GHL_API_BASE_URL', { infer: true });
     const version: string = config.get('GHL_API_VERSION', { infer: true });
     const timeout: number = config.get('GHL_API_TIMEOUT_MS', { infer: true });
+    this.maxAttempts = config.get('GHL_REPLY_MAX_ATTEMPTS', { infer: true });
+    this.retryDelayMs = config.get('GHL_REPLY_RETRY_DELAY_MS', { infer: true });
 
     this.client = axios.create({
       baseURL,
@@ -67,6 +80,31 @@ export class GhlReply {
   async send(input: GhlReplyInput): Promise<GhlReplyResult> {
     const body = buildSendBody(input);
 
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.attempt(input, body);
+      } catch (err) {
+        if (err instanceof UnrecoverableError || attempt >= this.maxAttempts) {
+          throw err;
+        }
+        this.logger.warn(
+          {
+            jobId: input.jobId,
+            attempt,
+            maxAttempts: this.maxAttempts,
+            err: (err as Error).message,
+          },
+          'GHL send attempt failed — retrying',
+        );
+        await delay(this.retryDelayMs);
+      }
+    }
+  }
+
+  private async attempt(
+    input: GhlReplyInput,
+    body: WhatsappMediaBody | FlatSendBody,
+  ): Promise<GhlReplyResult> {
     const started = Date.now();
     let response;
     try {
@@ -107,6 +145,10 @@ export class GhlReply {
     );
     throw new Error(`GHL returned ${status}: ${summary}`);
   }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 interface WhatsappMediaBody {
