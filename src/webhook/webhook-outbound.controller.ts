@@ -233,7 +233,7 @@ export class WebhookOutboundController {
   }
 
   /**
-   * When a delivered `OutboundMessage`'s `body` exactly matches (trim +
+   * When a `sent` `OutboundMessage`'s `body` exactly matches (trim +
    * case-insensitive) the group's `general_settings.stop_message` — a manual
    * "kill switch" phrase — tags the contact with `AI_DISABLE_TAG` so future
    * inbound messages skip the AI (see the hard-stop check in
@@ -249,7 +249,8 @@ export class WebhookOutboundController {
    * a retryable Error propagates so GHL redelivers the webhook.
    */
   private async handleStopMessage(body: OutboundWebhookPayloadDto): Promise<boolean | undefined> {
-    if (body.type !== 'OutboundMessage' || body.status !== 'delivered') return undefined;
+    // GHL emits `sent` first for WhatsApp; `delivered` may arrive late or never.
+    if (body.type !== 'OutboundMessage' || body.status !== 'sent') return undefined;
 
     const locationId = body.locationId?.trim();
     const contactId = body.contactId?.trim();

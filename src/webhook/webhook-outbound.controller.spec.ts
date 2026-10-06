@@ -414,7 +414,7 @@ describe('WebhookOutboundController', () => {
     function deliveredPayload(
       over: Partial<OutboundWebhookPayloadDto> = {},
     ): OutboundWebhookPayloadDto {
-      return payload({ userId: undefined, body: 'STOP BOT', ...over });
+      return payload({ userId: undefined, body: 'STOP BOT', status: 'sent', ...over });
     }
 
     function testable(controller: unknown): TestableController {
@@ -524,11 +524,11 @@ describe('WebhookOutboundController', () => {
       expect(tagged).toBeUndefined();
     });
 
-    it('does not fetch the group or tag when status is not delivered', async () => {
+    it('does not fetch the group or tag when status is not sent', async () => {
       const { controller, groupFetcher, updater } = makeController();
 
       const tagged = await testable(controller).handleStopMessage(
-        deliveredPayload({ status: 'sent' }),
+        deliveredPayload({ status: 'delivered' }),
       );
 
       expect(groupFetcher.fetch).not.toHaveBeenCalled();
