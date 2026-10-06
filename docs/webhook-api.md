@@ -254,6 +254,19 @@ failed definitions lookup falls back to the channel/default agent rather
 than failing the job. Workflow-sourced webhooks keep their explicit
 top-level / `customData.agent_id` and are not affected by this override.
 
+**AI reactivation.** When the group sets `general_settings.ai_reactivation:
+true` (strict boolean; anything else is off), an inbound **WhatsApp** ad-lead
+message — text starting with the ad preamble (`Headline:` / `*Source URL:*`
+lines followed by a blank line) — re-enables the AI for a blocked contact. A
+contact is blocked when it carries the `desactivar ia` tag or the group's
+`ai_field_id` value is `Disabled`. This overrides the block even when it was set
+by a human `stop_message`. Reactivation only happens when an agent resolves
+(`message_agents` prefix → contact `aiagent` → `channel_agents.whatsapp` →
+`default_agent`); otherwise the contact stays blocked. It then removes the tag
+(`DELETE $GHL_API_BASE_URL/contacts/{id}/tags`) and/or writes `Enabled` to the
+`ai_field_id` field (only the writes needed), and the flush continues normally.
+A failed write fails the job (BullMQ retries). Runs after the `ai_schedule` gate.
+
 `contact_data.email` and `contact_data.phone` are the contact's own email
 and phone from the same `GET $GHL_API_BASE_URL/contacts/{id}`. Each is
 included only when present and non-blank — otherwise omitted from

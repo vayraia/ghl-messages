@@ -36,6 +36,7 @@ function makeProcessor() {
     }),
     getUser: jest.fn(),
     updateContactFields: jest.fn(),
+    removeTags: jest.fn(),
   } as unknown as GhlContactClient;
   const config = {
     get: (key: string) =>
@@ -488,6 +489,329 @@ describe('WebhookProcessor.process', () => {
       expect(p.forwarder.forward).toHaveBeenCalledWith(
         expect.objectContaining({ tags: undefined }),
       );
+    });
+  });
+
+  describe('AI reactivation', () => {
+    const adBody =
+      '*Headline:* Saca tu Cita Aquí\n*Source URL:* https://fb.me/4ViOwqT2G\n\nEstoy interesado en el servicio de baropodometría y plantillas personalizadas.';
+    const adItems: DebouncedMessage[] = [
+      {
+        body: adBody,
+        replyChannel: 'WhatsApp',
+        locationId: undefined,
+        requestId: 'msg_1',
+        receivedAt: '2026-05-06T19:50:39.476Z',
+      },
+    ];
+    const aiFieldId = { id: 'cf_ai_gate', key: 'contact.ai_gate' };
+
+    function inboundJob(): Job<FlushJobData, unknown, string> {
+      return makeJob({
+        data: {
+          debounceKey: 'loc:LOC123',
+          contactId: 'c1',
+          source: 'inbound',
+          locationId: 'LOC123',
+        },
+      });
+    }
+
+    function setup(
+      p: ReturnType<typeof makeProcessor>,
+      opts: {
+        group?: Record<string, unknown>;
+        contact?: Record<string, unknown>;
+        items?: DebouncedMessage[];
+      } = {},
+    ) {
+      (p.debouncer.drain as jest.Mock).mockResolvedValue(opts.items ?? adItems);
+      (p.groupFetcher.fetch as jest.Mock).mockResolvedValue({
+        apiKey: 'k',
+        aiReactivation: true,
+        defaultAgent: 'agent_default',
+        ...opts.group,
+      });
+      (p.contactClient.get as jest.Mock).mockResolvedValue({
+        status: 200,
+        customFields: [],
+        tags: ['desactivar ia'],
+        ...opts.contact,
+      });
+      (p.contactClient.removeTags as jest.Mock).mockResolvedValue({ status: 200, durationMs: 1 });
+      (p.contactClient.updateContactFields as jest.Mock).mockResolvedValue({
+        status: 200,
+        durationMs: 1,
+      });
+      (p.forwarder.forward as jest.Mock).mockResolvedValue({
+        messages: [{ type: 'text', content: 'reply' }],
+        durationMs: 1,
+      });
+      (p.ghl.send as jest.Mock).mockResolvedValue({ status: 200, durationMs: 1 });
+      (p.insistence.schedule as jest.Mock).mockResolvedValue(undefined);
+    }
+
+    function expectBlocked(
+      p: ReturnType<typeof makeProcessor>,
+      result: unknown,
+      skipped: string,
+    ): void {
+      expect(result).toMatchObject({ ok: true, skipped });
+      expect(p.contactClient.removeTags).not.toHaveBeenCalled();
+      expect(p.contactClient.updateContactFields).not.toHaveBeenCalled();
+      expect(p.forwarder.forward).not.toHaveBeenCalled();
+    }
+
+    it('removes the tag and continues to forward', async () => {
+      const p = makeProcessor();
+      setup(p, { contact: { tags: ['vip', 'desactivar ia'] } });
+
+      const result = await p.processor.process(inboundJob());
+
+      expect(p.contactClient.removeTags).toHaveBeenCalledWith({
+        jobId: 'job-1',
+        contactId: 'c1',
+        apiKey: 'k',
+        tags: ['desactivar ia'],
+      });
+      expect(p.contactClient.updateContactFields).not.toHaveBeenCalled();
+      expect(p.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: 'agent_default', tags: ['vip'] }),
+      );
+      expect(result).not.toHaveProperty('skipped');
+    });
+
+    it('writes Enabled to a Disabled ai_field and continues (forwarding Enabled custom_fields)', async () => {
+      const p = makeProcessor();
+      setup(p, {
+        group: { aiFieldId },
+        contact: { tags: [], customFields: [{ id: 'cf_ai_gate', value: 'Disabled' }] },
+      });
+      (p.contactClient.listCustomFields as jest.Mock).mockResolvedValue(
+        new Map([['cf_ai_gate', 'AI']]),
+      );
+
+      const result = await p.processor.process(inboundJob());
+
+      expect(p.contactClient.removeTags).not.toHaveBeenCalled();
+      expect(p.contactClient.updateContactFields).toHaveBeenCalledWith({
+        jobId: 'job-1',
+        contactId: 'c1',
+        apiKey: 'k',
+        fields: [{ id: 'cf_ai_gate', key: 'contact.ai_gate', value: 'Enabled' }],
+      });
+      expect(p.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customFields: [{ id: 'cf_ai_gate', name: 'AI', value: 'Enabled' }],
+        }),
+      );
+      expect(result).not.toHaveProperty('skipped');
+    });
+
+    it('clears both the tag and the ai_field when both block', async () => {
+      const p = makeProcessor();
+      setup(p, {
+        group: { aiFieldId },
+        contact: {
+          tags: ['desactivar ia'],
+          customFields: [{ id: 'cf_ai_gate', value: 'disabled' }],
+        },
+      });
+
+      const result = await p.processor.process(inboundJob());
+
+      expect(p.contactClient.removeTags).toHaveBeenCalledTimes(1);
+      expect(p.contactClient.updateContactFields).toHaveBeenCalledTimes(1);
+      expect(p.forwarder.forward).toHaveBeenCalled();
+      expect(result).not.toHaveProperty('skipped');
+    });
+
+    it('stays blocked when no agent resolves (tag)', async () => {
+      const p = makeProcessor();
+      setup(p, { group: { defaultAgent: undefined } });
+
+      const result = await p.processor.process(inboundJob());
+
+      expectBlocked(p, result, 'ai_disabled_tag');
+    });
+
+    it('stays blocked when no agent resolves (ai_field)', async () => {
+      const p = makeProcessor();
+      setup(p, {
+        group: { aiFieldId, defaultAgent: undefined },
+        contact: { tags: [], customFields: [{ id: 'cf_ai_gate', value: 'Disabled' }] },
+      });
+
+      const result = await p.processor.process(inboundJob());
+
+      // No agent resolves, so the inbound flush is skipped before the ai_field gate.
+      expectBlocked(p, result, 'no_default_agent');
+    });
+
+    it('reactivates when resolved ONLY via a message_agents prefix match', async () => {
+      const p = makeProcessor();
+      setup(p, {
+        group: {
+          defaultAgent: undefined,
+          messageAgents: [{ message: 'Estoy interesado', agentId: 'agent_ad' }],
+        },
+      });
+
+      await p.processor.process(inboundJob());
+
+      expect(p.contactClient.removeTags).toHaveBeenCalled();
+      expect(p.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: 'agent_ad' }),
+      );
+    });
+
+    it('reactivates when resolved ONLY via the contact aiagent field', async () => {
+      const p = makeProcessor();
+      setup(p, {
+        group: { defaultAgent: undefined },
+        contact: { customFields: [{ id: 'cf_agent', value: 'agent_from_contact' }] },
+      });
+      (p.contactClient.listFieldDefs as jest.Mock).mockResolvedValue({
+        idToName: new Map<string, string>(),
+        keyToId: new Map<string, string>([['contact.aiagent', 'cf_agent']]),
+      });
+
+      await p.processor.process(inboundJob());
+
+      expect(p.contactClient.removeTags).toHaveBeenCalled();
+      expect(p.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: 'agent_from_contact' }),
+      );
+    });
+
+    it('keeps message_agents and contact aiagent as the winning final agent', async () => {
+      const p = makeProcessor();
+      setup(p, {
+        group: {
+          channelAgents: { whatsapp: 'agent_wpp' },
+          messageAgents: [{ message: 'Estoy interesado', agentId: 'agent_ad' }],
+        },
+        contact: { customFields: [{ id: 'cf_agent', value: 'agent_from_contact' }] },
+      });
+      (p.contactClient.listFieldDefs as jest.Mock).mockResolvedValue({
+        idToName: new Map<string, string>(),
+        keyToId: new Map<string, string>([['contact.aiagent', 'cf_agent']]),
+      });
+
+      await p.processor.process(inboundJob());
+
+      expect(p.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: 'agent_ad' }),
+      );
+
+      const p2 = makeProcessor();
+      setup(p2, {
+        group: { channelAgents: { whatsapp: 'agent_wpp' } },
+        contact: { customFields: [{ id: 'cf_agent', value: 'agent_from_contact' }] },
+      });
+      (p2.contactClient.listFieldDefs as jest.Mock).mockResolvedValue({
+        idToName: new Map<string, string>(),
+        keyToId: new Map<string, string>([['contact.aiagent', 'cf_agent']]),
+      });
+
+      await p2.processor.process(inboundJob());
+
+      expect(p2.forwarder.forward).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: 'agent_from_contact' }),
+      );
+    });
+
+    it('stays blocked when ai_reactivation is off', async () => {
+      const p = makeProcessor();
+      setup(p, { group: { aiReactivation: undefined } });
+
+      expectBlocked(p, await p.processor.process(inboundJob()), 'ai_disabled_tag');
+
+      const p2 = makeProcessor();
+      setup(p2, { group: { aiReactivation: false } });
+
+      expectBlocked(p2, await p2.processor.process(inboundJob()), 'ai_disabled_tag');
+    });
+
+    it('stays blocked on a non-WhatsApp channel', async () => {
+      const p = makeProcessor();
+      setup(p, { items: [{ ...adItems[0], replyChannel: 'IG' }] });
+
+      expectBlocked(p, await p.processor.process(inboundJob()), 'ai_disabled_tag');
+    });
+
+    it('stays blocked when the message has no ad preamble', async () => {
+      const p = makeProcessor();
+      setup(p, { items: [{ ...adItems[0], body: 'Estoy interesado en el servicio' }] });
+
+      expectBlocked(p, await p.processor.process(inboundJob()), 'ai_disabled_tag');
+    });
+
+    it('does not run for a workflow-sourced flush', async () => {
+      const p = makeProcessor();
+      setup(p);
+
+      const job = makeJob({
+        data: {
+          debounceKey: 'ventas',
+          contactId: 'c1',
+          source: 'workflow',
+          agentId: 'ventas',
+          locationId: 'LOC123',
+        },
+      });
+
+      const result = await p.processor.process(job);
+
+      expectBlocked(p, result, 'ai_disabled_tag');
+    });
+
+    it('does not resolve the agent for a contact that is not blocked', async () => {
+      const p = makeProcessor();
+      setup(p, { contact: { tags: [], customFields: [{ id: 'cf_agent', value: 'x' }] } });
+
+      await p.processor.process(inboundJob());
+
+      expect(p.contactClient.removeTags).not.toHaveBeenCalled();
+      // Only the normal flow resolves the agent: one definitions lookup, not two.
+      expect(p.contactClient.listFieldDefs).toHaveBeenCalledTimes(1);
+    });
+
+    it('resolves the agent only once per flush when reactivating', async () => {
+      const p = makeProcessor();
+      setup(p, {
+        contact: { customFields: [{ id: 'cf_agent', value: 'agent_from_contact' }] },
+      });
+      (p.contactClient.listFieldDefs as jest.Mock).mockResolvedValue({
+        idToName: new Map<string, string>(),
+        keyToId: new Map<string, string>([['contact.aiagent', 'cf_agent']]),
+      });
+
+      await p.processor.process(inboundJob());
+
+      expect(p.contactClient.removeTags).toHaveBeenCalled();
+      expect(p.contactClient.listFieldDefs).toHaveBeenCalledTimes(1);
+    });
+
+    it('throws (retryable) when removing the tag fails, without forwarding', async () => {
+      const p = makeProcessor();
+      setup(p);
+      (p.contactClient.removeTags as jest.Mock).mockRejectedValue(new Error('GHL 503'));
+
+      await expect(p.processor.process(inboundJob())).rejects.toThrow('GHL 503');
+      expect(p.forwarder.forward).not.toHaveBeenCalled();
+    });
+
+    it('throws (retryable) when writing the ai_field fails, without forwarding', async () => {
+      const p = makeProcessor();
+      setup(p, {
+        group: { aiFieldId },
+        contact: { tags: [], customFields: [{ id: 'cf_ai_gate', value: 'Disabled' }] },
+      });
+      (p.contactClient.updateContactFields as jest.Mock).mockRejectedValue(new Error('GHL 503'));
+
+      await expect(p.processor.process(inboundJob())).rejects.toThrow('GHL 503');
+      expect(p.forwarder.forward).not.toHaveBeenCalled();
     });
   });
 

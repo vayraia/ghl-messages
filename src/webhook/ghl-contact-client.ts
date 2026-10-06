@@ -39,6 +39,18 @@ export interface AddTagsResult {
   durationMs: number;
 }
 
+export interface RemoveTagsInput {
+  jobId: string;
+  contactId: string;
+  apiKey: string;
+  tags: string[];
+}
+
+export interface RemoveTagsResult {
+  status: number;
+  durationMs: number;
+}
+
 export interface GetContactInput {
   jobId: string;
   contactId: string;
@@ -501,6 +513,66 @@ export class GhlContactClient {
       'Contact add-tags errored — retryable',
     );
     throw new Error(`Contact add-tags returned ${status}: ${summary}`);
+  }
+
+  /**
+   * Removes one or more tags from a contact via `DELETE /contacts/:id/tags`
+   * (tags go in the request body). Removing a tag the contact doesn't have is a
+   * no-op, so this is idempotent. Same retry-split convention as `addTags`:
+   * 2xx success, 4xx `UnrecoverableError`, 5xx/network `Error` (retryable).
+   */
+  async removeTags(input: RemoveTagsInput): Promise<RemoveTagsResult> {
+    const path = `/contacts/${encodeURIComponent(input.contactId)}/tags`;
+    const started = Date.now();
+    let response;
+    try {
+      response = await this.client.delete(path, {
+        data: { tags: input.tags },
+        headers: { Authorization: `Bearer ${input.apiKey}` },
+      });
+    } catch (err) {
+      const axiosErr = err as AxiosError;
+      const code = axiosErr.code ?? 'UNKNOWN';
+      this.logger.warn(
+        { jobId: input.jobId, contactId: input.contactId, code, msg: axiosErr.message },
+        'Contact remove-tags transport error',
+      );
+      throw new Error(`Contact remove-tags transport error (${code}): ${axiosErr.message}`);
+    }
+
+    const durationMs = Date.now() - started;
+    const { status } = response;
+
+    if (status >= 200 && status < 300) {
+      this.logger.log(
+        { jobId: input.jobId, contactId: input.contactId, status, durationMs, tags: input.tags },
+        'GHL contact remove-tags accepted',
+      );
+      return { status, durationMs };
+    }
+
+    const summary = summarizeBody(response.data);
+
+    if (status >= 400 && status < 500) {
+      if (isGhlInternalTimeout(status, response.data)) {
+        this.logger.warn(
+          { jobId: input.jobId, contactId: input.contactId, status, durationMs, body: summary },
+          'Contact remove-tags timed out internally — retryable',
+        );
+        throw new Error(`Contact remove-tags timed out internally (${status}): ${summary}`);
+      }
+      this.logger.warn(
+        { jobId: input.jobId, contactId: input.contactId, status, durationMs, body: summary },
+        'Contact remove-tags rejected — non-retryable',
+      );
+      throw new UnrecoverableError(`Contact remove-tags rejected with ${status}: ${summary}`);
+    }
+
+    this.logger.warn(
+      { jobId: input.jobId, contactId: input.contactId, status, durationMs, body: summary },
+      'Contact remove-tags errored — retryable',
+    );
+    throw new Error(`Contact remove-tags returned ${status}: ${summary}`);
   }
 }
 

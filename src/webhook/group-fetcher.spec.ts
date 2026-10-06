@@ -542,6 +542,37 @@ describe('GroupFetcher', () => {
     });
   });
 
+  describe('ai_reactivation', () => {
+    it('parses a boolean ai_reactivation', async () => {
+      const { fetcher, get } = makeFetcher();
+
+      get.mockResolvedValue({
+        status: 200,
+        data: { api_key: 'sk', general_settings: { ai_reactivation: true } },
+      });
+      expect((await fetcher.fetch('loc_abc', 'job-1')).aiReactivation).toBe(true);
+
+      get.mockResolvedValue({
+        status: 200,
+        data: { api_key: 'sk', general_settings: { ai_reactivation: false } },
+      });
+      expect((await fetcher.fetch('loc_abc', 'job-1')).aiReactivation).toBe(false);
+    });
+
+    it('returns aiReactivation=undefined when missing or non-boolean', async () => {
+      const { fetcher, get } = makeFetcher();
+
+      get.mockResolvedValue({ status: 200, data: { api_key: 'sk', general_settings: {} } });
+      expect((await fetcher.fetch('loc_abc', 'job-1')).aiReactivation).toBeUndefined();
+
+      get.mockResolvedValue({
+        status: 200,
+        data: { api_key: 'sk', general_settings: { ai_reactivation: 'true' } },
+      });
+      expect((await fetcher.fetch('loc_abc', 'job-1')).aiReactivation).toBeUndefined();
+    });
+  });
+
   describe('message_agents', () => {
     it('parses message_agents entries with message and agent_id', async () => {
       const { fetcher, get } = makeFetcher();

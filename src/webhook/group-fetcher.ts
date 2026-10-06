@@ -54,6 +54,9 @@ export interface GroupSettings {
   // Exact phrase (case/whitespace-insensitive) that, when it matches an
   // outbound message body, tags the contact with "desactivar ia".
   stopMessage?: string;
+  // When true, an inbound WhatsApp ad-lead message re-enables the AI for a
+  // blocked contact (clears the "desactivar ia" tag / ai_field Disabled).
+  aiReactivation?: boolean;
 }
 
 interface GroupResponse {
@@ -71,6 +74,7 @@ interface GroupResponse {
     drop_inbound_video?: unknown;
     message_agents?: unknown;
     stop_message?: unknown;
+    ai_reactivation?: unknown;
     [key: string]: unknown;
   };
   [key: string]: unknown;
@@ -172,6 +176,7 @@ export class GroupFetcher {
         dropInboundVideo: parseDropInboundVideo(body.general_settings?.drop_inbound_video),
         messageAgents: parseMessageAgents(body.general_settings?.message_agents),
         stopMessage: parseStopMessage(body.general_settings?.stop_message),
+        aiReactivation: parseAiReactivation(body.general_settings?.ai_reactivation),
       };
       if (this.cacheTtlMs > 0) {
         this.cache.set(locationId, {
@@ -220,6 +225,12 @@ function parseDebounceMs(raw: unknown): number | undefined {
 // the global default; anything else (missing, string, number) falls back to
 // it — no truthy/falsy coercion on partial config.
 function parseDropInboundVideo(raw: unknown): boolean | undefined {
+  return typeof raw === 'boolean' ? raw : undefined;
+}
+
+// Per-group AI reactivation switch. Only a real boolean counts; anything else
+// (missing, string, number) is undefined (feature off).
+function parseAiReactivation(raw: unknown): boolean | undefined {
   return typeof raw === 'boolean' ? raw : undefined;
 }
 

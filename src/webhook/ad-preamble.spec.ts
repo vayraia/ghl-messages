@@ -1,4 +1,4 @@
-import { stripAdPreamble } from './ad-preamble';
+import { hasAdPreamble, stripAdPreamble } from './ad-preamble';
 
 describe('stripAdPreamble', () => {
   it('strips a Headline + Source URL preamble followed by a blank line', () => {
@@ -40,5 +40,26 @@ describe('stripAdPreamble', () => {
 
   it('handles an empty string', () => {
     expect(stripAdPreamble('')).toBe('');
+  });
+});
+
+describe('hasAdPreamble', () => {
+  it('is true for the real ad-lead message', () => {
+    const text =
+      '*Headline:* Saca tu Cita Aquí\n*Source URL:* https://fb.me/4ViOwqT2G\n\nEstoy interesado en el servicio de baropodometría y plantillas personalizadas.';
+    expect(hasAdPreamble(text)).toBe(true);
+  });
+
+  it('is true for a Headline-only preamble followed by a blank line', () => {
+    expect(hasAdPreamble('Headline: Épica\n\nHola')).toBe(true);
+  });
+
+  it('is false for a plain message', () => {
+    expect(hasAdPreamble('Hola, quiero información')).toBe(false);
+  });
+
+  it('is false when the preamble has no blank-line separator', () => {
+    expect(hasAdPreamble('Headline: X\n*Source URL:* Y\nHola')).toBe(false);
+    expect(hasAdPreamble('Headline: not really a preamble, just a message')).toBe(false);
   });
 });

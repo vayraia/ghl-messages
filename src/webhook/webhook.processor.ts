@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { Job, UnrecoverableError } from 'bullmq';
 import { AppEnv } from '../config/env.validation';
 import { isAiAvailable } from './ai-schedule';
-import { resolveAgentForChannel } from './channel-resolver';
+import { ReplyChannel, resolveAgentForChannel } from './channel-resolver';
 import { resolveAgentForMessagePrefix } from './message-agent-resolver';
 import { ChatMessage, WebhookForwarder } from './webhook-forwarder';
 import {
@@ -18,7 +18,8 @@ import {
 } from './ghl-contact-client';
 import { GhlReply, inferImageMimeType, inferDocumentMimeType, basenameFromUrl } from './ghl-reply';
 import { AttachmentClassifier } from './attachment-classifier';
-import { GroupFetcher } from './group-fetcher';
+import { hasAdPreamble } from './ad-preamble';
+import { GroupFetcher, GroupSettings } from './group-fetcher';
 import { InsistenceClient } from './insistence-client';
 import { DebouncedMessage, FlushJobData, MessageDebouncer } from './message-debouncer';
 import { WEBHOOK_FLUSH_JOB, WEBHOOK_QUEUE_TOKEN } from './webhook.tokens';
@@ -36,6 +37,19 @@ const CHAT_MESSAGE_DELAY_MS = 2500;
  * case-insensitively against the contact's normalized tags.
  */
 export const AI_DISABLE_TAG = 'desactivar ia';
+
+/**
+ * Value written to the group's `ai_field_id` custom field when `ai_reactivation`
+ * re-enables the AI. Assumes the GHL field uses the Enabled/Disabled values
+ * (the outbound flow writes 'Disabled'; `isAiDisabled` only matches that).
+ */
+export const AI_ENABLED_VALUE = 'Enabled';
+
+interface InboundAgentResolution {
+  resolved: string | undefined;
+  prefixMatch: ReturnType<typeof resolveAgentForMessagePrefix>;
+  contactAgent: string | undefined;
+}
 
 export interface FlushResult {
   ok: true;
@@ -223,6 +237,78 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
       apiKey: group.apiKey,
     });
 
+    // Resolved at most once per flush: the reactivation step below may need it
+    // before the hard-stop, and the normal inbound flow reuses the same result.
+    let inboundResolution: InboundAgentResolution | undefined;
+
+    // AI reactivation: with `general_settings.ai_reactivation` on, an inbound
+    // WhatsApp ad-lead message (ad preamble) re-enables the AI for a blocked
+    // contact — overriding the block even if a human stop_message set it — but
+    // only when an agent would actually handle it (final resolved agent exists).
+    // Clears the "desactivar ia" tag and/or flips the ai_field back to Enabled,
+    // then flows on normally. Write failures throw so BullMQ retries.
+    if (
+      source === 'inbound' &&
+      replyChannel === 'WhatsApp' &&
+      group.aiReactivation === true &&
+      hasAdPreamble(items[0].body)
+    ) {
+      const hasTag = (contact.tags ?? []).includes(AI_DISABLE_TAG);
+      const aiField = group.aiFieldId
+        ? contact.customFields.find((f) => f.id === group.aiFieldId!.id)
+        : undefined;
+      const fieldDisabled = !!aiField && isAiDisabled(aiField.value);
+
+      if (hasTag || fieldDisabled) {
+        inboundResolution = await this.resolveInboundAgent(
+          items[0].body,
+          contact,
+          locationId,
+          group,
+          replyChannel,
+          String(job.id),
+        );
+        if (inboundResolution.resolved) {
+          const cleared: string[] = [];
+          if (hasTag) {
+            await this.contactClient.removeTags({
+              jobId: String(job.id),
+              contactId,
+              apiKey: group.apiKey,
+              tags: [AI_DISABLE_TAG],
+            });
+            contact.tags = (contact.tags ?? []).filter((t) => t !== AI_DISABLE_TAG);
+            cleared.push('tag');
+          }
+          if (fieldDisabled && group.aiFieldId && aiField) {
+            const field: ContactFieldUpdate = {
+              id: group.aiFieldId.id,
+              key: group.aiFieldId.key,
+              value: AI_ENABLED_VALUE,
+            };
+            await this.contactClient.updateContactFields({
+              jobId: String(job.id),
+              contactId,
+              apiKey: group.apiKey,
+              fields: [field],
+            });
+            aiField.value = AI_ENABLED_VALUE;
+            cleared.push('ai_field');
+          }
+          this.logger.log(
+            {
+              jobId: job.id,
+              contactId,
+              locationId,
+              agentId: inboundResolution.resolved,
+              cleared,
+            },
+            'AI reactivated by inbound ad-lead message',
+          );
+        }
+      }
+    }
+
     // Hard stop: a contact tagged with "desactivar ia" opts out of the AI
     // entirely. Skip everything downstream (agent resolution, AI gate, forward)
     // and drop the drained messages. Tags are already normalized (lowercased +
@@ -254,15 +340,15 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
     let agentId: string;
     let messageAgentMatch: string | undefined;
     if (source === 'inbound') {
-      const prefixMatch = resolveAgentForMessagePrefix(items[0].body, group.messageAgents);
-      const contactAgent = await this.resolveContactAgent(
+      inboundResolution ??= await this.resolveInboundAgent(
+        items[0].body,
         contact,
         locationId,
-        group.apiKey,
+        group,
+        replyChannel,
         String(job.id),
       );
-      const channelAgent = resolveAgentForChannel(group.channelAgents, replyChannel);
-      const resolved = prefixMatch?.agentId ?? contactAgent ?? channelAgent ?? group.defaultAgent;
+      const { resolved, prefixMatch, contactAgent } = inboundResolution;
       if (!resolved) {
         this.logger.log(
           { jobId: job.id, locationId, contactId, replyChannel },
@@ -529,6 +615,25 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
       ghlStatus: lastStatus,
       totalMs: Date.now() - started,
     };
+  }
+
+  /**
+   * Inbound agent resolution (see the precedence note in `process`): message_agents
+   * prefix match -> contact override -> channel agent -> default agent.
+   */
+  private async resolveInboundAgent(
+    body: string,
+    contact: GetContactResult,
+    locationId: string,
+    group: GroupSettings,
+    replyChannel: ReplyChannel,
+    jobId: string,
+  ): Promise<InboundAgentResolution> {
+    const prefixMatch = resolveAgentForMessagePrefix(body, group.messageAgents);
+    const contactAgent = await this.resolveContactAgent(contact, locationId, group.apiKey, jobId);
+    const channelAgent = resolveAgentForChannel(group.channelAgents, replyChannel);
+    const resolved = prefixMatch?.agentId ?? contactAgent ?? channelAgent ?? group.defaultAgent;
+    return { resolved, prefixMatch, contactAgent };
   }
 
   /**

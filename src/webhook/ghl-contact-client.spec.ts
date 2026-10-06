@@ -16,7 +16,8 @@ function makeClient() {
   const get = jest.fn();
   const put = jest.fn();
   const post = jest.fn();
-  mockedAxios.create.mockReturnValue({ get, put, post } as unknown as ReturnType<
+  const del = jest.fn();
+  mockedAxios.create.mockReturnValue({ get, put, post, delete: del } as unknown as ReturnType<
     typeof axios.create
   >);
 
@@ -27,7 +28,7 @@ function makeClient() {
   };
   const config = { get: (k: string) => env[k] } as unknown as ConfigService<AppEnv, true>;
 
-  return { client: new GhlContactClient(config), get, put, post };
+  return { client: new GhlContactClient(config), get, put, post, del };
 }
 
 describe('GhlContactClient', () => {
@@ -425,6 +426,75 @@ describe('GhlContactClient', () => {
 
       const err = await client
         .addTags({ jobId: 'job-1', contactId: 'c', apiKey: 'k', tags: ['x'] })
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(Error);
+      expect(err).not.toBeInstanceOf(UnrecoverableError);
+      expect(err.message).toMatch(/ECONNREFUSED/);
+    });
+  });
+
+  describe('removeTags', () => {
+    it('DELETEs /contacts/:id/tags with bearer auth and the tags in the body', async () => {
+      const { client, del } = makeClient();
+      del.mockResolvedValue({ status: 200, data: { tags: [] } });
+
+      const result = await client.removeTags({
+        jobId: 'job-1',
+        contactId: 'c_1',
+        apiKey: 'sk_xxx',
+        tags: ['desactivar ia'],
+      });
+
+      expect(del).toHaveBeenCalledWith('/contacts/c_1/tags', {
+        data: { tags: ['desactivar ia'] },
+        headers: { Authorization: 'Bearer sk_xxx' },
+      });
+      expect(result.status).toBe(200);
+    });
+
+    it('throws UnrecoverableError on 4xx', async () => {
+      const { client, del } = makeClient();
+      del.mockResolvedValue({ status: 400, data: { error: 'bad' } });
+
+      await expect(
+        client.removeTags({ jobId: 'job-1', contactId: 'c', apiKey: 'k', tags: ['x'] }),
+      ).rejects.toBeInstanceOf(UnrecoverableError);
+    });
+
+    it('throws a regular Error on GHL internal timeout (401 Command timed out)', async () => {
+      const { client, del } = makeClient();
+      del.mockResolvedValue({ status: 401, data: { message: 'Command timed out' } });
+
+      const err = await client
+        .removeTags({ jobId: 'job-1', contactId: 'c', apiKey: 'k', tags: ['x'] })
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(Error);
+      expect(err).not.toBeInstanceOf(UnrecoverableError);
+    });
+
+    it('throws a regular Error on 5xx (retryable)', async () => {
+      const { client, del } = makeClient();
+      del.mockResolvedValue({ status: 503, data: 'down' });
+
+      const err = await client
+        .removeTags({ jobId: 'job-1', contactId: 'c', apiKey: 'k', tags: ['x'] })
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(Error);
+      expect(err).not.toBeInstanceOf(UnrecoverableError);
+      expect(err.message).toMatch(/503/);
+    });
+
+    it('throws a regular Error on transport failure (retryable)', async () => {
+      const { client, del } = makeClient();
+      const transport = new Error('connect ECONNREFUSED') as AxiosError;
+      transport.code = 'ECONNREFUSED';
+      del.mockRejectedValue(transport);
+
+      const err = await client
+        .removeTags({ jobId: 'job-1', contactId: 'c', apiKey: 'k', tags: ['x'] })
         .catch((e) => e);
 
       expect(err).toBeInstanceOf(Error);
