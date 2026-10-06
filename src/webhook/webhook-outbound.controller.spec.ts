@@ -110,7 +110,12 @@ describe('WebhookOutboundController', () => {
     expect(insistenceClient.cancel).not.toHaveBeenCalled();
   });
 
-  it('deduplicates on messageId via Redis SET NX EX', async () => {
+  // The tests below (idempotency, AI disable, aiagent clear, insistence cancel,
+  // non_blocking_users) cover the human-takeover body of `outbound()`, which is
+  // temporarily disabled behind an early `return { ok: true }` (see the comment
+  // in webhook-outbound.controller.ts). Skipped, not deleted: un-skip them when
+  // that block is re-enabled.
+  it.skip('deduplicates on messageId via Redis SET NX EX', async () => {
     const { controller, groupFetcher, insistenceClient, redis } = makeController();
     redis.set.mockResolvedValueOnce(null);
 
@@ -122,7 +127,7 @@ describe('WebhookOutboundController', () => {
     expect(insistenceClient.cancel).not.toHaveBeenCalled();
   });
 
-  it('skips idempotency check when messageId is missing', async () => {
+  it.skip('skips idempotency check when messageId is missing', async () => {
     const { controller, groupFetcher, updater, redis } = makeController();
     groupFetcher.fetch.mockResolvedValue({
       apiKey: 'sk',
@@ -136,7 +141,7 @@ describe('WebhookOutboundController', () => {
     expect(r).toEqual({ ok: true, updated: true });
   });
 
-  it('returns skipped=nothing_to_update when no aiFieldId and no aiagent field', async () => {
+  it.skip('returns skipped=nothing_to_update when no aiFieldId and no aiagent field', async () => {
     const { controller, groupFetcher, updater } = makeController();
     groupFetcher.fetch.mockResolvedValue({ apiKey: 'sk' } satisfies GroupSettings);
 
@@ -146,7 +151,7 @@ describe('WebhookOutboundController', () => {
     expect(updater.updateContactFields).not.toHaveBeenCalled();
   });
 
-  it('disables the AI field with the group apiKey when ai_field_id is configured', async () => {
+  it.skip('disables the AI field with the group apiKey when ai_field_id is configured', async () => {
     const { controller, groupFetcher, updater } = makeController();
     groupFetcher.fetch.mockResolvedValue({
       apiKey: 'sk_xxx',
@@ -166,7 +171,7 @@ describe('WebhookOutboundController', () => {
     expect(r).toEqual({ ok: true, updated: true });
   });
 
-  describe('aiagent override clearing', () => {
+  describe.skip('aiagent override clearing', () => {
     it('clears aiagent alongside the AI disable in a single update', async () => {
       const { controller, groupFetcher, updater } = makeController();
       groupFetcher.fetch.mockResolvedValue({
@@ -263,14 +268,14 @@ describe('WebhookOutboundController', () => {
     expect(r).toEqual({ ok: true });
   });
 
-  it('re-throws transient Error so GHL retries the webhook', async () => {
+  it.skip('re-throws transient Error so GHL retries the webhook', async () => {
     const { controller, groupFetcher } = makeController();
     groupFetcher.fetch.mockRejectedValue(new Error('upstream 503'));
 
     await expect(controller.outbound(payload())).rejects.toThrow('upstream 503');
   });
 
-  describe('insistence cancellation', () => {
+  describe.skip('insistence cancellation', () => {
     it('fetches the group before cancelling insistences on a human takeover', async () => {
       const { controller, groupFetcher, updater, insistenceClient } = makeController();
       groupFetcher.fetch.mockResolvedValue({
@@ -331,7 +336,7 @@ describe('WebhookOutboundController', () => {
     });
   });
 
-  describe('non_blocking_users', () => {
+  describe.skip('non_blocking_users', () => {
     it('skips cancel + update when userId matches a non_blocking_users entry', async () => {
       const { controller, groupFetcher, updater, insistenceClient } = makeController();
       groupFetcher.fetch.mockResolvedValue({
