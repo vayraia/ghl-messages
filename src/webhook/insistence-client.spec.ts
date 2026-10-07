@@ -92,7 +92,24 @@ describe('InsistenceClient', () => {
       expect(post).not.toHaveBeenCalled();
     });
 
-    it('drops entries that map to non-positive minutes', async () => {
+    it('keeps times index-aligned with insistences (0 occupies its slot)', async () => {
+      const { client, post } = makeClient();
+      post.mockResolvedValue({ status: 200, data: {} });
+
+      await client.schedule({
+        ...baseInput,
+        insistences: [
+          { minutes: 30, mode: 'static', text: 'hola' },
+          { minutes: 0, mode: 'dynamic', prompt: 'p' },
+          { hours: 1 },
+        ],
+      });
+
+      const [, body] = post.mock.calls[0];
+      expect(body.times).toEqual([30, 0, 60]);
+    });
+
+    it('maps invalid or negative entries to 0 without dropping them', async () => {
       const { client, post } = makeClient();
       post.mockResolvedValue({ status: 200, data: {} });
 
@@ -107,7 +124,7 @@ describe('InsistenceClient', () => {
       });
 
       const [, body] = post.mock.calls[0];
-      expect(body.times).toEqual([10, 150]);
+      expect(body.times).toEqual([0, 10, 0, 150]);
     });
 
     it('skips POST when all entries collapse to non-positive minutes', async () => {

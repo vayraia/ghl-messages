@@ -9,6 +9,11 @@ import { ChannelAgents } from './channel-resolver';
 export interface InsistenceEntry {
   hours?: number;
   minutes?: number;
+  // Follow-up content, resolved by the ai API from `insistences[step_index]`;
+  // passed through untouched.
+  mode?: 'static' | 'dynamic';
+  text?: string;
+  prompt?: string;
 }
 
 export interface AiFieldRef {

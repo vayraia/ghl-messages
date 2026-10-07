@@ -69,7 +69,7 @@ describe('GroupFetcher', () => {
         api_key: 'sk_xxx',
         general_settings: {
           insistences: [
-            { hours: 0, minutes: 10 },
+            { hours: 0, minutes: 10, mode: 'static', text: 'hola' },
             { hours: 1, minutes: 0 },
           ],
         },
@@ -82,7 +82,7 @@ describe('GroupFetcher', () => {
     expect(result).toEqual({
       apiKey: 'sk_xxx',
       insistences: [
-        { hours: 0, minutes: 10 },
+        { hours: 0, minutes: 10, mode: 'static', text: 'hola' },
         { hours: 1, minutes: 0 },
       ],
       insistenceSchedule: undefined,

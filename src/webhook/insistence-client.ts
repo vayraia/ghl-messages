@@ -62,10 +62,10 @@ export class InsistenceClient {
     }
 
     const times = mapInsistencesToMinutes(insistences);
-    if (times.length === 0) {
+    if (!times.some((t) => t > 0)) {
       this.logger.debug(
         { jobId: input.jobId, locationId: input.locationId, raw: insistences.length },
-        'Insistence skipped — all entries mapped to non-positive minutes',
+        'Insistence skipped — all entries mapped to zero minutes',
       );
       return;
     }
@@ -171,16 +171,19 @@ export class InsistenceClient {
   }
 }
 
+/**
+ * Maps every entry to its delay in minutes, preserving length and order:
+ * `times[i]` MUST stay index-aligned with the group's `insistences[i]`, since
+ * jobs sends `step_index` back to the ai API to pick that entry. Invalid or
+ * negative entries become 0 instead of being dropped.
+ */
 function mapInsistencesToMinutes(entries: InsistenceEntry[]): number[] {
-  const out: number[] = [];
-  for (const entry of entries) {
+  return entries.map((entry) => {
     const h = Number(entry?.hours ?? 0);
     const m = Number(entry?.minutes ?? 0);
-    if (!Number.isFinite(h) || !Number.isFinite(m)) continue;
-    const total = h * 60 + m;
-    if (total > 0) out.push(total);
-  }
-  return out;
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return 0;
+    return Math.max(0, h * 60 + m);
+  });
 }
 
 function summarizeBody(body: unknown): string {
