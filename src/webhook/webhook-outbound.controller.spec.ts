@@ -524,11 +524,26 @@ describe('WebhookOutboundController', () => {
       expect(tagged).toBeUndefined();
     });
 
-    it('does not fetch the group or tag when status is not sent', async () => {
+    it('tags on status "delivered" too (Facebook/Instagram/TikTok never emit "sent")', async () => {
       const { controller, groupFetcher, updater } = makeController();
+      groupFetcher.fetch.mockResolvedValue({
+        apiKey: 'sk',
+        stopMessage: 'STOP BOT',
+      } satisfies GroupSettings);
 
       const tagged = await testable(controller).handleStopMessage(
         deliveredPayload({ status: 'delivered' }),
+      );
+
+      expect(updater.addTags).toHaveBeenCalledTimes(1);
+      expect(tagged).toBe(true);
+    });
+
+    it('does not fetch the group or tag when status is neither sent nor delivered', async () => {
+      const { controller, groupFetcher, updater } = makeController();
+
+      const tagged = await testable(controller).handleStopMessage(
+        deliveredPayload({ status: 'failed' }),
       );
 
       expect(groupFetcher.fetch).not.toHaveBeenCalled();

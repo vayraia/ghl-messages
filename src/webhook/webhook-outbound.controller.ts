@@ -249,8 +249,11 @@ export class WebhookOutboundController {
    * a retryable Error propagates so GHL redelivers the webhook.
    */
   private async handleStopMessage(body: OutboundWebhookPayloadDto): Promise<boolean | undefined> {
-    // GHL emits `sent` first for WhatsApp; `delivered` may arrive late or never.
-    if (body.type !== 'OutboundMessage' || body.status !== 'sent') return undefined;
+    // GHL emits `sent` first for WhatsApp (`delivered` may arrive late or never),
+    // but Facebook/Instagram/TikTok only ever report `delivered`. Accept both —
+    // tagging twice is idempotent.
+    if (body.type !== 'OutboundMessage') return undefined;
+    if (body.status !== 'sent' && body.status !== 'delivered') return undefined;
 
     const locationId = body.locationId?.trim();
     const contactId = body.contactId?.trim();
