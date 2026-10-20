@@ -17,6 +17,7 @@ import { AttachmentClassifier } from './attachment-classifier';
 import { GroupFetcher } from './group-fetcher';
 import { InsistenceClient } from './insistence-client';
 import { MessageDebouncer } from './message-debouncer';
+import { TemplateFollowupsClient } from './template-followups-client';
 import { MetaSignatureGuard } from './guards/meta-signature.guard';
 import { WebhookSecretGuard } from './guards/webhook-secret.guard';
 import { WEBHOOK_QUEUE_TOKEN, WEBHOOK_REDIS_CLIENT } from './webhook.tokens';
@@ -69,6 +70,7 @@ class RedisClientLifecycle implements OnApplicationShutdown {
     AttachmentClassifier,
     GroupFetcher,
     InsistenceClient,
+    TemplateFollowupsClient,
     MessageDebouncer,
     WebhookSecretGuard,
     MetaSignatureGuard,

@@ -3,6 +3,7 @@ import { AppEnv } from '../config/env.validation';
 import { InboundMessagePayloadDto } from './dto/inbound-message-payload.dto';
 import { GroupFetcher, GroupSettings } from './group-fetcher';
 import { MessageDebouncer } from './message-debouncer';
+import { TemplateFollowupsClient } from './template-followups-client';
 import { WebhookInboundController } from './webhook-inbound.controller';
 
 interface RedisMock {
@@ -39,6 +40,9 @@ function makeController(
         : jest.fn().mockResolvedValue({ apiKey: 'k', ...group } as GroupSettings),
   } as unknown as jest.Mocked<GroupFetcher>;
   const redis: RedisMock = { set: jest.fn().mockResolvedValue('OK') };
+  const templateFollowups = {
+    cancel: jest.fn().mockResolvedValue(undefined),
+  } as unknown as jest.Mocked<TemplateFollowupsClient>;
   const env: Record<string, number> = { IDEMPOTENCY_TTL_SECONDS: 3600, ...over };
   const config = {
     get: (k: keyof AppEnv) => env[k as string],
@@ -48,9 +52,10 @@ function makeController(
     debouncer,
     groupFetcher,
     redis as never,
+    templateFollowups,
     config,
   ) as unknown as TestableController;
-  return { controller, debouncer, groupFetcher, redis };
+  return { controller, debouncer, groupFetcher, redis, templateFollowups };
 }
 
 function payload(over: Partial<InboundMessagePayloadDto> = {}): InboundMessagePayloadDto {
@@ -91,6 +96,67 @@ describe('WebhookInboundController', () => {
       const r = await controller.handleInbound(payload());
       expect(r).toEqual({ ok: true, jobId: 'j_1', debounced: false });
       expect(debouncer.accept).toHaveBeenCalled();
+    });
+
+    describe('template followups cancellation', () => {
+      it('cancels with contactId + locationId for a valid inbound', async () => {
+        const { controller, templateFollowups } = makeController();
+        await controller.handleInbound(payload());
+        expect(templateFollowups.cancel).toHaveBeenCalledTimes(1);
+        expect(templateFollowups.cancel).toHaveBeenCalledWith({
+          contactId: 'c_1',
+          locationId: 'loc_1',
+        });
+      });
+
+      it('does NOT cancel for a filtered event (outbound)', async () => {
+        const { controller, templateFollowups } = makeController();
+        await controller.handleInbound(payload({ direction: 'outbound' }));
+        expect(templateFollowups.cancel).not.toHaveBeenCalled();
+      });
+
+      it('does NOT cancel for a comment', async () => {
+        const { controller, templateFollowups } = makeController();
+        await controller.handleInbound(payload({ messageTypeString: 'TYPE_TIKTOK_COMMENT' }));
+        expect(templateFollowups.cancel).not.toHaveBeenCalled();
+      });
+
+      it('does NOT cancel for a sticker-only message', async () => {
+        const { controller, templateFollowups } = makeController();
+        await controller.handleInbound(
+          payload({ body: '', attachments: ['https://cdn.ghl.com/s/abc.webp'] }),
+        );
+        expect(templateFollowups.cancel).not.toHaveBeenCalled();
+      });
+
+      it('does NOT cancel for a stale event', async () => {
+        const { controller, templateFollowups } = makeController({ INBOUND_MAX_AGE_SECONDS: 600 });
+        await controller.handleInbound(payload({ dateAdded: '2026-03-05T11:12:09.000Z' }));
+        expect(templateFollowups.cancel).not.toHaveBeenCalled();
+      });
+
+      it('does NOT cancel for a duplicate messageId', async () => {
+        const { controller, redis, templateFollowups } = makeController();
+        redis.set.mockResolvedValue(null);
+        const r = await controller.handleInbound(payload());
+        expect(r).toEqual({ ok: true, deduplicated: true });
+        expect(templateFollowups.cancel).not.toHaveBeenCalled();
+      });
+
+      it('a cancel failure does not break inbound handling', async () => {
+        const { controller, debouncer, templateFollowups } = makeController();
+        templateFollowups.cancel.mockRejectedValue(new Error('jobs down'));
+        const r = await controller.handleInbound(payload());
+        expect(r).toEqual({ ok: true, jobId: 'j_1', debounced: false });
+        expect(debouncer.accept).toHaveBeenCalled();
+      });
+
+      it('does not wait for a slow cancel before debouncing', async () => {
+        const { controller, debouncer, templateFollowups } = makeController();
+        templateFollowups.cancel.mockReturnValue(new Promise(() => {}));
+        await controller.handleInbound(payload());
+        expect(debouncer.accept).toHaveBeenCalled();
+      });
     });
 
     describe('per-group debounce override', () => {

@@ -7,6 +7,7 @@ import { resolveInboundChannel } from './channel-resolver';
 import { InboundMessagePayloadDto } from './dto/inbound-message-payload.dto';
 import { GroupFetcher } from './group-fetcher';
 import { MessageDebouncer } from './message-debouncer';
+import { TemplateFollowupsClient } from './template-followups-client';
 import { WEBHOOK_REDIS_CLIENT } from './webhook.tokens';
 
 interface InboundAck {
@@ -40,6 +41,7 @@ export class WebhookInboundController {
     private readonly debouncer: MessageDebouncer,
     private readonly groupFetcher: GroupFetcher,
     @Inject(WEBHOOK_REDIS_CLIENT) private readonly redis: Redis,
+    private readonly templateFollowups: TemplateFollowupsClient,
     config: ConfigService<AppEnv, true>,
   ) {
     this.idempotencyTtlSeconds = config.get('IDEMPOTENCY_TTL_SECONDS', { infer: true });
@@ -175,6 +177,17 @@ export class WebhookInboundController {
         return { ok: true, deduplicated: true };
       }
     }
+
+    // A real, fresh reply from the contact: cancel their pending template
+    // follow-ups in jobs. Best-effort and not awaited — it must never delay,
+    // fail or alter the inbound processing below. The client already swallows
+    // its own errors; the catch is a belt-and-braces guard.
+    this.templateFollowups.cancel({ contactId, locationId }).catch((err) => {
+      this.logger.warn(
+        { locationId, contactId, err: (err as Error).message },
+        'template followups cancel failed (ignored)',
+      );
+    });
 
     const replyChannel = resolveInboundChannel(body);
 
