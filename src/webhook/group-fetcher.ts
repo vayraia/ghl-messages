@@ -59,6 +59,9 @@ export interface GroupSettings {
   // Exact phrase (case/whitespace-insensitive) that, when it matches an
   // outbound message body, tags the contact with "desactivar ia".
   stopMessage?: string;
+  // Exact phrase (case/whitespace-insensitive) that, when it matches an
+  // outbound message body, removes the "desactivar ia" tag from the contact.
+  startMessage?: string;
   // When true, an inbound WhatsApp ad-lead message re-enables the AI for a
   // blocked contact (clears the "desactivar ia" tag / ai_field Disabled).
   aiReactivation?: boolean;
@@ -79,6 +82,7 @@ interface GroupResponse {
     drop_inbound_video?: unknown;
     message_agents?: unknown;
     stop_message?: unknown;
+    start_message?: unknown;
     ai_reactivation?: unknown;
     [key: string]: unknown;
   };
@@ -181,6 +185,7 @@ export class GroupFetcher {
         dropInboundVideo: parseDropInboundVideo(body.general_settings?.drop_inbound_video),
         messageAgents: parseMessageAgents(body.general_settings?.message_agents),
         stopMessage: parseStopMessage(body.general_settings?.stop_message),
+        startMessage: parseStopMessage(body.general_settings?.start_message),
         aiReactivation: parseAiReactivation(body.general_settings?.ai_reactivation),
       };
       if (this.cacheTtlMs > 0) {

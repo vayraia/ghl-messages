@@ -276,8 +276,38 @@ export class WebhookOutboundController {
       throw err;
     }
 
-    if (!group.stopMessage) return undefined;
-    if (text.toLowerCase() !== group.stopMessage.trim().toLowerCase()) return false;
+    if (!group.stopMessage && !group.startMessage) return undefined;
+
+    const normalized = text.toLowerCase();
+
+    // Counterpart of stop_message: removes the tag so the AI resumes.
+    if (group.startMessage && normalized === group.startMessage.trim().toLowerCase()) {
+      try {
+        await this.contactClient.removeTags({
+          jobId,
+          contactId,
+          apiKey: group.apiKey,
+          tags: [AI_DISABLE_TAG],
+        });
+        this.logger.log(
+          { jobId, contactId, locationId },
+          'start_message matched — removed AI disable tag',
+        );
+        return true;
+      } catch (err) {
+        if (err instanceof UnrecoverableError) {
+          this.logger.warn(
+            { jobId, contactId, err: err.message },
+            'start_message: remove-tags failed permanently — swallowed',
+          );
+          return false;
+        }
+        throw err;
+      }
+    }
+
+    if (!group.stopMessage) return false;
+    if (normalized !== group.stopMessage.trim().toLowerCase()) return false;
 
     try {
       await this.contactClient.addTags({

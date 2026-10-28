@@ -20,6 +20,7 @@ function makeController() {
     listFieldDefs: jest.fn().mockResolvedValue({ idToName: new Map(), keyToId: new Map() }),
     get: jest.fn(),
     addTags: jest.fn(),
+    removeTags: jest.fn(),
   } as unknown as jest.Mocked<GhlContactClient>;
   const insistenceClient = {
     schedule: jest.fn(),
@@ -439,6 +440,29 @@ describe('WebhookOutboundController', () => {
         tags: ['desactivar ia'],
       });
       expect(tagged).toBe(true);
+    });
+
+    it('removes the tag when body matches start_message', async () => {
+      const { controller, groupFetcher, updater } = makeController();
+      groupFetcher.fetch.mockResolvedValue({
+        apiKey: 'sk_xxx',
+        stopMessage: 'STOP BOT',
+        startMessage: 'START BOT',
+      } satisfies GroupSettings);
+      updater.removeTags.mockResolvedValue({ status: 200, durationMs: 5 });
+
+      const result = await testable(controller).handleStopMessage(
+        deliveredPayload({ body: ' start bot ' }),
+      );
+
+      expect(updater.removeTags).toHaveBeenCalledWith({
+        jobId: 'm_1',
+        contactId: 'c_1',
+        apiKey: 'sk_xxx',
+        tags: ['desactivar ia'],
+      });
+      expect(updater.addTags).not.toHaveBeenCalled();
+      expect(result).toBe(true);
     });
 
     it('matches case-insensitively and ignoring surrounding whitespace', async () => {
