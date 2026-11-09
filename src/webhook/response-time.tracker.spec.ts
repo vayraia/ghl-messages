@@ -2,7 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import { AppEnv } from '../config/env.validation';
 import { ResponseTimeTracker } from './response-time.tracker';
 
-function makeTracker(graceMs = 0) {
+function makeTracker(graceMs = 0, enabled = true) {
   const exec = jest.fn();
   const multi = { get: jest.fn().mockReturnThis(), del: jest.fn().mockReturnThis(), exec };
   const redis = {
@@ -13,6 +13,7 @@ function makeTracker(graceMs = 0) {
   const queue = { add: jest.fn().mockResolvedValue(undefined) };
   const env: Record<string, number> = {
     RESPONSE_TIME_PENDING_TTL_SECONDS: 600,
+    RESPONSE_TIME_ENABLED: enabled as unknown as number,
     RESPONSE_TIME_AI_GRACE_MS: graceMs,
   };
   const config = { get: (k: string) => env[k] } as unknown as ConfigService<AppEnv, true>;
@@ -102,5 +103,16 @@ describe('ResponseTimeTracker', () => {
       },
       expect.objectContaining({ jobId: 'rt_m_out', attempts: 5 }),
     );
+  });
+
+  it('is a complete no-op when RESPONSE_TIME_ENABLED is off (no Redis, no queue)', async () => {
+    const { tracker, redis, queue } = makeTracker(0, false);
+    await tracker.markAiSent('m_ai');
+    await tracker.registerInbound({ locationId: 'l', contactId: 'c', inboundAt: 1 });
+    await expect(tracker.recordAdvisorReply(reply)).resolves.toBe('no_pending');
+    expect(redis.set).not.toHaveBeenCalled();
+    expect(redis.exists).not.toHaveBeenCalled();
+    expect(redis.multi).not.toHaveBeenCalled();
+    expect(queue.add).not.toHaveBeenCalled();
   });
 });

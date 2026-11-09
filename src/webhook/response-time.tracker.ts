@@ -4,7 +4,11 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 import { AppEnv } from '../config/env.validation';
-import { RESPONSE_TIME_JOB, RESPONSE_TIME_QUEUE_TOKEN, WEBHOOK_REDIS_CLIENT } from './webhook.tokens';
+import {
+  RESPONSE_TIME_JOB,
+  RESPONSE_TIME_QUEUE_TOKEN,
+  WEBHOOK_REDIS_CLIENT,
+} from './webhook.tokens';
 
 /** How long we remember that a messageId was sent by the AI (outbound webhooks arrive within seconds). */
 const AI_SENT_TTL_SECONDS = 3600;
@@ -39,6 +43,7 @@ export type AdvisorReplyOutcome = 'recorded' | 'ai_message' | 'no_pending';
 @Injectable()
 export class ResponseTimeTracker {
   private readonly logger = new Logger(ResponseTimeTracker.name);
+  private readonly enabled: boolean;
   private readonly pendingTtlSeconds: number;
   private readonly aiGraceMs: number;
 
@@ -47,13 +52,14 @@ export class ResponseTimeTracker {
     @InjectQueue(RESPONSE_TIME_QUEUE_TOKEN) private readonly queue: Queue,
     config: ConfigService<AppEnv, true>,
   ) {
+    this.enabled = config.get('RESPONSE_TIME_ENABLED', { infer: true }) === true;
     this.pendingTtlSeconds = config.get('RESPONSE_TIME_PENDING_TTL_SECONDS', { infer: true });
     this.aiGraceMs = config.get('RESPONSE_TIME_AI_GRACE_MS', { infer: true });
   }
 
   /** Remembers that the AI sent this GHL messageId, so its outbound webhook isn't counted as an advisor. */
   async markAiSent(messageId: string | undefined): Promise<void> {
-    if (!messageId) return;
+    if (!this.enabled || !messageId) return;
     await this.redis.set(aiSentKey(messageId), '1', 'EX', AI_SENT_TTL_SECONDS);
   }
 
@@ -69,6 +75,7 @@ export class ResponseTimeTracker {
     channel?: string;
     inboundAt: number;
   }): Promise<void> {
+    if (!this.enabled) return;
     const value: PendingInbound = {
       inboundAt: input.inboundAt,
       messageId: input.messageId,
@@ -95,6 +102,7 @@ export class ResponseTimeTracker {
     messageId: string;
     repliedAt: number;
   }): Promise<AdvisorReplyOutcome> {
+    if (!this.enabled) return 'no_pending';
     if (await this.isAiSent(input.messageId)) return 'ai_message';
 
     // The outbound webhook can beat our own POST /conversations/messages

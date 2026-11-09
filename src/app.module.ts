@@ -11,6 +11,7 @@ import { envValidationSchema, AppEnv } from './config/env.validation';
 import { buildRedisOptions } from './config/redis.config';
 import { DatabaseModule } from './db/database.module';
 import { MetaOutboundModule } from './meta-outbound/meta-outbound.module';
+import { ResponseTimeModule } from './webhook/response-time.module';
 import { WebhookModule } from './webhook/webhook.module';
 import { HealthModule } from './health/health.module';
 import { OAuthModule } from './oauth/oauth.module';
@@ -28,6 +29,11 @@ if (process.env.NODE_ENV !== 'test') {
 // Redis-only inbound path boots without a database.
 const metaOutboundEnabled = process.env.META_OUTBOUND_ENABLED === 'true';
 const metaOutboundImports = metaOutboundEnabled ? [DatabaseModule, MetaOutboundModule] : [];
+
+// Advisor response-time persistence also needs Postgres, so it is opt-in too.
+// DatabaseModule is deduplicated by Nest if META_OUTBOUND_ENABLED loads it as well.
+const responseTimeEnabled = process.env.RESPONSE_TIME_ENABLED === 'true';
+const responseTimeImports = responseTimeEnabled ? [DatabaseModule, ResponseTimeModule] : [];
 
 @Module({
   imports: [
@@ -57,6 +63,7 @@ const metaOutboundImports = metaOutboundEnabled ? [DatabaseModule, MetaOutboundM
       }),
     }),
     ...metaOutboundImports,
+    ...responseTimeImports,
     WebhookModule,
     HealthModule,
     OAuthModule,

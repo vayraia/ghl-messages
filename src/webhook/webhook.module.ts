@@ -1,6 +1,5 @@
 import { Module, OnApplicationShutdown } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
-import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
 import { Redis } from 'ioredis';
 import { AppEnv } from '../config/env.validation';
@@ -21,8 +20,6 @@ import { MessageDebouncer } from './message-debouncer';
 import { TemplateFollowupsClient } from './template-followups-client';
 import { MetaSignatureGuard } from './guards/meta-signature.guard';
 import { WebhookSecretGuard } from './guards/webhook-secret.guard';
-import { AdvisorResponseTime } from './advisor-response-time.entity';
-import { ResponseTimeProcessor } from './response-time.processor';
 import { ResponseTimeTracker } from './response-time.tracker';
 import {
   RESPONSE_TIME_QUEUE_TOKEN,
@@ -43,7 +40,8 @@ class RedisClientLifecycle implements OnApplicationShutdown {
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([AdvisorResponseTime]),
+    // Queue only (Redis): the tracker enqueues here; the Postgres worker lives in
+    // ResponseTimeModule, loaded only when RESPONSE_TIME_ENABLED.
     BullModule.registerQueue({ name: RESPONSE_TIME_QUEUE_TOKEN }),
     BullModule.registerQueue({
       name: WEBHOOK_QUEUE_TOKEN,
@@ -83,7 +81,6 @@ class RedisClientLifecycle implements OnApplicationShutdown {
     TemplateFollowupsClient,
     MessageDebouncer,
     ResponseTimeTracker,
-    ResponseTimeProcessor,
     WebhookSecretGuard,
     MetaSignatureGuard,
   ],

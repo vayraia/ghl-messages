@@ -510,6 +510,12 @@ Independent of the above (and post-ack), every `sent`/`delivered`
 Only the **first** advisor reply after a contact message is recorded; contacts
 nobody answers produce no row.
 
+**Opt-in.** Disabled by default (`RESPONSE_TIME_ENABLED=false`): the tracker does
+nothing and no database connection is opened, so the Redis-only deployment
+keeps booting. To enable it set `RESPONSE_TIME_ENABLED=true` **and**
+`DATABASE_URL` (the same Postgres `ai` reads for the report), then run
+`npm run migration:run`.
+
 ## `GET /v1/health/live`
 
 Liveness probe. Returns `{ "status": "ok" }` as long as the process is
