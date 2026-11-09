@@ -485,6 +485,31 @@ Failure handling on the contact PUT matches the rest of the pipeline: `4xx`
 is treated as a misconfiguration and swallowed (returns `200`), while `5xx` /
 network errors are re-thrown so GHL retries the webhook.
 
+### Advisor response-time tracking
+
+Independent of the above (and post-ack), every `sent`/`delivered`
+`OutboundMessage` with a `userId` can close a response-time clock:
+
+1. **Inbound** starts the clock: `SET webhook:rt:pending:{locationId}:{contactId}`
+   with `NX`, so the contact's *oldest unanswered* message keeps it
+   (TTL `RESPONSE_TIME_PENDING_TTL_SECONDS`, default 7 d).
+2. **AI replies are tagged**: after each `POST /conversations/messages` the
+   returned `messageId` is stored as `webhook:ai-sent:{messageId}` (1 h). GHL
+   stamps the assigned agent's `userId` on AI-sent messages too, so `userId`
+   alone cannot tell AI from advisor.
+3. **Outbound** skips tagged messages. Since the outbound webhook can arrive
+   before our send response, an untagged message is re-checked once after
+   `RESPONSE_TIME_AI_GRACE_MS` (default 1500 ms). Otherwise it atomically takes
+   the pending inbound (first of `sent`/`delivered` wins) and enqueues a job on
+   the `response-times` queue.
+4. A worker inserts one row into `advisor_response_times`
+   (`location_id`, `contact_id`, `user_id`, `channel`, `inbound_message_id`,
+   `outbound_message_id` unique, `inbound_at`, `replied_at`,
+   `response_seconds`). Run `npm run migration:run` to create the table.
+
+Only the **first** advisor reply after a contact message is recorded; contacts
+nobody answers produce no row.
+
 ## `GET /v1/health/live`
 
 Liveness probe. Returns `{ "status": "ok" }` as long as the process is

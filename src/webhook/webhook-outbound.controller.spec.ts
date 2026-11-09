@@ -4,6 +4,7 @@ import { OutboundWebhookPayloadDto } from './dto/outbound-webhook-payload.dto';
 import { GhlContactClient } from './ghl-contact-client';
 import { GroupFetcher, GroupSettings } from './group-fetcher';
 import { InsistenceClient } from './insistence-client';
+import { ResponseTimeTracker } from './response-time.tracker';
 import { WebhookOutboundController } from './webhook-outbound.controller';
 import { AppEnv } from '../config/env.validation';
 
@@ -27,6 +28,9 @@ function makeController() {
     cancel: jest.fn().mockResolvedValue(undefined),
   } as unknown as jest.Mocked<InsistenceClient>;
   const redis: RedisMock = { set: jest.fn().mockResolvedValue('OK') };
+  const responseTime = {
+    recordAdvisorReply: jest.fn().mockResolvedValue('recorded'),
+  } as unknown as jest.Mocked<ResponseTimeTracker>;
 
   const env: Record<string, number | string> = {
     IDEMPOTENCY_TTL_SECONDS: 3600,
@@ -41,10 +45,11 @@ function makeController() {
     updater,
     insistenceClient,
     redis as never,
+    responseTime,
     config,
   );
 
-  return { controller, groupFetcher, updater, insistenceClient, redis };
+  return { controller, groupFetcher, updater, insistenceClient, redis, responseTime };
 }
 
 function payload(over: Partial<OutboundWebhookPayloadDto> = {}): OutboundWebhookPayloadDto {
@@ -633,5 +638,37 @@ describe('WebhookOutboundController', () => {
       expect(groupFetcher.fetch).toHaveBeenCalledWith('loc_1', 'c_1:loc_1');
       expect(updater.addTags).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'c_1:loc_1' }));
     });
+  });
+});
+
+describe('WebhookOutboundController advisor response-time tracking', () => {
+  type Tracking = { trackAdvisorReply(body: OutboundWebhookPayloadDto): Promise<void> };
+
+  it('records a sent OutboundMessage that carries a userId', async () => {
+    const { controller, responseTime } = makeController();
+    await (controller as unknown as Tracking).trackAdvisorReply(
+      payload({ status: 'sent', dateAdded: '2026-01-01T00:00:10.000Z' }),
+    );
+    expect(responseTime.recordAdvisorReply).toHaveBeenCalledWith({
+      locationId: 'loc_1',
+      contactId: 'c_1',
+      userId: 'u_1',
+      messageId: 'm_1',
+      repliedAt: Date.parse('2026-01-01T00:00:10.000Z'),
+    });
+  });
+
+  it.each([
+    ['wrong type', { type: 'InboundMessage' }],
+    ['other status', { status: 'read' }],
+    ['no userId', { userId: undefined }],
+    ['no messageId', { messageId: undefined }],
+    ['no contactId', { contactId: undefined }],
+  ])('ignores the payload when %s', async (_name, over) => {
+    const { controller, responseTime } = makeController();
+    await (controller as unknown as Tracking).trackAdvisorReply(
+      payload(over as Partial<OutboundWebhookPayloadDto>),
+    );
+    expect(responseTime.recordAdvisorReply).not.toHaveBeenCalled();
   });
 });

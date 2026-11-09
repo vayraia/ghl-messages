@@ -371,3 +371,20 @@ describe('GhlReply', () => {
     });
   });
 });
+
+describe('GhlReply messageId', () => {
+  it('returns the messageId from the GHL response so the AI send can be tagged', async () => {
+    const { ghl, post } = makeGhl();
+    post.mockResolvedValue({ status: 201, data: { conversationId: 'cv', messageId: 'msg_1' } });
+    const result = await ghl.send(baseInput);
+    expect(result.messageId).toBe('msg_1');
+    expect(result.status).toBe(201);
+  });
+
+  it('leaves messageId undefined when the response has none', async () => {
+    const { ghl, post } = makeGhl();
+    post.mockResolvedValue({ status: 201, data: { ok: true } });
+    const result = await ghl.send(baseInput);
+    expect(result.messageId).toBeUndefined();
+  });
+});

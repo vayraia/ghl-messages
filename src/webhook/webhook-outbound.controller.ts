@@ -8,6 +8,7 @@ import { OutboundWebhookPayloadDto } from './dto/outbound-webhook-payload.dto';
 import { ContactFieldUpdate, GhlContactClient } from './ghl-contact-client';
 import { GroupFetcher } from './group-fetcher';
 import { InsistenceClient } from './insistence-client';
+import { ResponseTimeTracker } from './response-time.tracker';
 import { AI_DISABLE_TAG } from './webhook.processor';
 import { WEBHOOK_REDIS_CLIENT } from './webhook.tokens';
 
@@ -27,6 +28,7 @@ export class WebhookOutboundController {
     private readonly contactClient: GhlContactClient,
     private readonly insistenceClient: InsistenceClient,
     @Inject(WEBHOOK_REDIS_CLIENT) private readonly redis: Redis,
+    private readonly responseTime: ResponseTimeTracker,
     config: ConfigService<AppEnv, true>,
   ) {
     this.idempotencyTtlSeconds = config.get('IDEMPOTENCY_TTL_SECONDS', { infer: true });
@@ -79,6 +81,15 @@ export class WebhookOutboundController {
           'outbound webhook processing failed (post-ack)',
         );
       });
+
+    // Advisor response-time tracking: independent of the stop_message path above
+    // and equally post-ack, so neither can delay or break the other.
+    this.trackAdvisorReply(body).catch((err) => {
+      this.logger.warn(
+        { messageId: body.messageId, contactId: body.contactId, err: (err as Error).message },
+        'advisor response-time tracking failed (post-ack)',
+      );
+    });
 
     // ────────────────────────────────────────────────────────────────────────
     // ENDPOINT DISABLED (commented out, not deleted): everything else the
@@ -230,6 +241,32 @@ export class WebhookOutboundController {
       throw err;
     }
     */
+  }
+
+  /**
+   * Closes the response-time clock when an advisor (a `userId` that is NOT the
+   * AI's own send, see `ResponseTimeTracker.markAiSent`) answers the contact.
+   * GHL stamps the assigned agent's `userId` on AI-sent messages too, which is
+   * why the AI's messageIds are tracked instead of trusting `userId` alone.
+   */
+  private async trackAdvisorReply(body: OutboundWebhookPayloadDto): Promise<void> {
+    if (body.type !== 'OutboundMessage') return;
+    if (body.status !== 'sent' && body.status !== 'delivered') return;
+
+    const locationId = body.locationId?.trim();
+    const contactId = body.contactId?.trim();
+    const userId = body.userId?.trim();
+    const messageId = body.messageId?.trim();
+    if (!locationId || !contactId || !userId || !messageId) return;
+
+    const dateMs = body.dateAdded ? Date.parse(body.dateAdded) : NaN;
+    await this.responseTime.recordAdvisorReply({
+      locationId,
+      contactId,
+      userId,
+      messageId,
+      repliedAt: Number.isNaN(dateMs) ? Date.now() : dateMs,
+    });
   }
 
   /**

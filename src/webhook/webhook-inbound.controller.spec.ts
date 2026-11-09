@@ -3,6 +3,7 @@ import { AppEnv } from '../config/env.validation';
 import { InboundMessagePayloadDto } from './dto/inbound-message-payload.dto';
 import { GroupFetcher, GroupSettings } from './group-fetcher';
 import { MessageDebouncer } from './message-debouncer';
+import { ResponseTimeTracker } from './response-time.tracker';
 import { TemplateFollowupsClient } from './template-followups-client';
 import { WebhookInboundController } from './webhook-inbound.controller';
 
@@ -43,6 +44,9 @@ function makeController(
   const templateFollowups = {
     cancel: jest.fn().mockResolvedValue(undefined),
   } as unknown as jest.Mocked<TemplateFollowupsClient>;
+  const responseTime = {
+    registerInbound: jest.fn().mockResolvedValue(undefined),
+  } as unknown as jest.Mocked<ResponseTimeTracker>;
   const env: Record<string, number> = { IDEMPOTENCY_TTL_SECONDS: 3600, ...over };
   const config = {
     get: (k: keyof AppEnv) => env[k as string],
@@ -53,9 +57,10 @@ function makeController(
     groupFetcher,
     redis as never,
     templateFollowups,
+    responseTime,
     config,
   ) as unknown as TestableController;
-  return { controller, debouncer, groupFetcher, redis, templateFollowups };
+  return { controller, debouncer, groupFetcher, redis, templateFollowups, responseTime };
 }
 
 function payload(over: Partial<InboundMessagePayloadDto> = {}): InboundMessagePayloadDto {
@@ -345,5 +350,34 @@ describe('WebhookInboundController', () => {
         expect(debouncer.accept).toHaveBeenCalled();
       });
     });
+  });
+});
+
+describe('WebhookInboundController response-time clock', () => {
+  it('starts the clock for a fresh inbound, using dateAdded', async () => {
+    const { controller, responseTime } = makeController();
+    await controller.handleInbound(payload({ dateAdded: '2026-01-01T00:00:00.000Z' }));
+    expect(responseTime.registerInbound).toHaveBeenCalledWith(
+      expect.objectContaining({
+        locationId: 'loc_1',
+        contactId: 'c_1',
+        messageId: 'm_1',
+        inboundAt: Date.parse('2026-01-01T00:00:00.000Z'),
+      }),
+    );
+  });
+
+  it('does not start the clock for a deduplicated inbound', async () => {
+    const { controller, redis, responseTime } = makeController();
+    redis.set.mockResolvedValue(null);
+    await controller.handleInbound(payload());
+    expect(responseTime.registerInbound).not.toHaveBeenCalled();
+  });
+
+  it('never fails the inbound when registering the clock errors', async () => {
+    const { controller, responseTime, debouncer } = makeController();
+    responseTime.registerInbound.mockRejectedValue(new Error('redis down'));
+    await expect(controller.handleInbound(payload())).resolves.toMatchObject({ ok: true });
+    expect(debouncer.accept).toHaveBeenCalled();
   });
 });

@@ -78,6 +78,13 @@ export interface AppEnv {
   MESSAGE_DEBOUNCE_MS: number;
   IDEMPOTENCY_TTL_SECONDS: number;
 
+  // Advisor response-time tracking. PENDING_TTL: how long an unanswered contact
+  // message keeps its clock running. AI_GRACE_MS: wait before treating an
+  // outbound as human, so the AI's own messageId mark has time to land
+  // (0 disables the wait).
+  RESPONSE_TIME_PENDING_TTL_SECONDS: number;
+  RESPONSE_TIME_AI_GRACE_MS: number;
+
   // Stale-event guard for the native inbound webhook. During contact syncs GHL
   // replays past messages with their original `dateAdded`; a real inbound is
   // seconds old while a replay is hours/days/months old. When > 0, inbound
@@ -189,6 +196,9 @@ export const envValidationSchema = Joi.object<AppEnv, true>({
 
   MESSAGE_DEBOUNCE_MS: Joi.number().integer().min(0).default(10_000),
   IDEMPOTENCY_TTL_SECONDS: Joi.number().integer().min(1).default(3600),
+
+  RESPONSE_TIME_PENDING_TTL_SECONDS: Joi.number().integer().min(60).default(604_800),
+  RESPONSE_TIME_AI_GRACE_MS: Joi.number().integer().min(0).default(1500),
 
   INBOUND_MAX_AGE_SECONDS: Joi.number().integer().min(0).default(0),
 

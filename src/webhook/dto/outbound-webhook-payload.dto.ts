@@ -46,4 +46,11 @@ export class OutboundWebhookPayloadDto {
   @IsString()
   @MaxLength(8000)
   body?: string;
+
+  // ISO timestamp of when GHL created the message; used as the reply time for
+  // advisor response-time tracking (falls back to receipt time when absent).
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  dateAdded?: string;
 }

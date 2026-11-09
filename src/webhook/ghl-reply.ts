@@ -35,6 +35,8 @@ export interface GhlReplyInput {
 export interface GhlReplyResult {
   status: number;
   durationMs: number;
+  /** GHL id of the message just created (`messageId` in the response), when present. */
+  messageId?: string;
 }
 
 /**
@@ -126,7 +128,7 @@ export class GhlReply {
         { jobId: input.jobId, status, durationMs, type: input.type },
         'GHL accepted reply',
       );
-      return { status, durationMs };
+      return { status, durationMs, messageId: extractMessageId(response.data) };
     }
 
     const summary = summarizeBody(response.data);
@@ -145,6 +147,14 @@ export class GhlReply {
     );
     throw new Error(`GHL returned ${status}: ${summary}`);
   }
+}
+
+function extractMessageId(data: unknown): string | undefined {
+  if (data && typeof data === 'object' && 'messageId' in data) {
+    const id = (data as { messageId?: unknown }).messageId;
+    if (typeof id === 'string' && id.length > 0) return id;
+  }
+  return undefined;
 }
 
 function delay(ms: number): Promise<void> {

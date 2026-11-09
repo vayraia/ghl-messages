@@ -8,6 +8,7 @@ import { GhlReply } from './ghl-reply';
 import { AttachmentClassifier } from './attachment-classifier';
 import { GroupFetcher } from './group-fetcher';
 import { InsistenceClient } from './insistence-client';
+import { ResponseTimeTracker } from './response-time.tracker';
 import { WEBHOOK_FLUSH_JOB } from './webhook.tokens';
 import { AppEnv } from '../config/env.validation';
 
@@ -15,6 +16,9 @@ function makeProcessor() {
   const debouncer = { drain: jest.fn() } as unknown as MessageDebouncer;
   const forwarder = { forward: jest.fn() } as unknown as WebhookForwarder;
   const ghl = { send: jest.fn() } as unknown as GhlReply;
+  const responseTime = {
+    markAiSent: jest.fn().mockResolvedValue(undefined),
+  } as unknown as ResponseTimeTracker;
   const classifier = {
     partitionVideos: jest
       .fn()
@@ -58,9 +62,11 @@ function makeProcessor() {
     groupFetcher,
     insistence,
     contactClient,
+    responseTime,
   );
 
   return {
+    responseTime,
     processor,
     debouncer,
     forwarder,
@@ -2121,5 +2127,32 @@ describe('WebhookProcessor.process', () => {
       expect(worker.close).not.toHaveBeenCalled();
       expect(worker.concurrency).toBe(20);
     });
+  });
+});
+
+describe('WebhookProcessor AI-sent marking', () => {
+  function arrange(sendResult: { status: number; durationMs: number; messageId?: string }) {
+    const ctx = makeProcessor();
+    (ctx.debouncer.drain as jest.Mock).mockResolvedValue(sampleItems);
+    (ctx.groupFetcher.fetch as jest.Mock).mockResolvedValue({ apiKey: 'k', insistences: [] });
+    (ctx.forwarder.forward as jest.Mock).mockResolvedValue({
+      messages: [{ type: 'text', content: 'reply' }],
+      durationMs: 5,
+    });
+    (ctx.ghl.send as jest.Mock).mockResolvedValue(sendResult);
+    (ctx.insistence.schedule as jest.Mock).mockResolvedValue(undefined);
+    return ctx;
+  }
+
+  it('marks the GHL messageId of each AI reply so its outbound webhook is not counted as an advisor', async () => {
+    const { processor, responseTime } = arrange({ status: 200, durationMs: 3, messageId: 'msg_ai' });
+    await processor.process(makeJob());
+    expect(responseTime.markAiSent).toHaveBeenCalledWith('msg_ai');
+  });
+
+  it('still completes the job when marking fails', async () => {
+    const { processor, responseTime } = arrange({ status: 200, durationMs: 3, messageId: 'msg_ai' });
+    (responseTime.markAiSent as jest.Mock).mockRejectedValue(new Error('redis down'));
+    await expect(processor.process(makeJob())).resolves.toBeDefined();
   });
 });

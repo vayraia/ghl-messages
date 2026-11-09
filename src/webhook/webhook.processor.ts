@@ -22,6 +22,7 @@ import { hasAdPreamble } from './ad-preamble';
 import { GroupFetcher, GroupSettings } from './group-fetcher';
 import { InsistenceClient } from './insistence-client';
 import { DebouncedMessage, FlushJobData, MessageDebouncer } from './message-debouncer';
+import { ResponseTimeTracker } from './response-time.tracker';
 import { WEBHOOK_FLUSH_JOB, WEBHOOK_QUEUE_TOKEN } from './webhook.tokens';
 
 /**
@@ -78,6 +79,7 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
     private readonly groupFetcher: GroupFetcher,
     private readonly insistence: InsistenceClient,
     private readonly contactClient: GhlContactClient,
+    private readonly responseTime: ResponseTimeTracker,
   ) {
     super();
   }
@@ -562,6 +564,14 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
         }
         sent++;
         lastStatus = result.status;
+        // Tag this message as AI-sent so its outbound webhook isn't mistaken for
+        // the assigned advisor's reply. Best-effort: never fails the send.
+        await this.responseTime.markAiSent(result.messageId).catch((err) => {
+          this.logger.warn(
+            { jobId: job.id, contactId, err: (err as Error).message },
+            'failed to mark AI-sent messageId (ignored)',
+          );
+        });
       } catch (err) {
         failed++;
         // Best-effort: a mid-sequence failure must NOT bubble up, otherwise

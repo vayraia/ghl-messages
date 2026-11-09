@@ -1,5 +1,6 @@
 import { Module, OnApplicationShutdown } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
 import { Redis } from 'ioredis';
 import { AppEnv } from '../config/env.validation';
@@ -20,7 +21,14 @@ import { MessageDebouncer } from './message-debouncer';
 import { TemplateFollowupsClient } from './template-followups-client';
 import { MetaSignatureGuard } from './guards/meta-signature.guard';
 import { WebhookSecretGuard } from './guards/webhook-secret.guard';
-import { WEBHOOK_QUEUE_TOKEN, WEBHOOK_REDIS_CLIENT } from './webhook.tokens';
+import { AdvisorResponseTime } from './advisor-response-time.entity';
+import { ResponseTimeProcessor } from './response-time.processor';
+import { ResponseTimeTracker } from './response-time.tracker';
+import {
+  RESPONSE_TIME_QUEUE_TOKEN,
+  WEBHOOK_QUEUE_TOKEN,
+  WEBHOOK_REDIS_CLIENT,
+} from './webhook.tokens';
 
 class RedisClientLifecycle implements OnApplicationShutdown {
   constructor(private readonly client: Redis) {}
@@ -35,6 +43,8 @@ class RedisClientLifecycle implements OnApplicationShutdown {
 
 @Module({
   imports: [
+    TypeOrmModule.forFeature([AdvisorResponseTime]),
+    BullModule.registerQueue({ name: RESPONSE_TIME_QUEUE_TOKEN }),
     BullModule.registerQueue({
       name: WEBHOOK_QUEUE_TOKEN,
       defaultJobOptions: {
@@ -72,6 +82,8 @@ class RedisClientLifecycle implements OnApplicationShutdown {
     InsistenceClient,
     TemplateFollowupsClient,
     MessageDebouncer,
+    ResponseTimeTracker,
+    ResponseTimeProcessor,
     WebhookSecretGuard,
     MetaSignatureGuard,
   ],

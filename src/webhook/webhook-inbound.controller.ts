@@ -7,6 +7,7 @@ import { resolveInboundChannel } from './channel-resolver';
 import { InboundMessagePayloadDto } from './dto/inbound-message-payload.dto';
 import { GroupFetcher } from './group-fetcher';
 import { MessageDebouncer } from './message-debouncer';
+import { ResponseTimeTracker } from './response-time.tracker';
 import { TemplateFollowupsClient } from './template-followups-client';
 import { WEBHOOK_REDIS_CLIENT } from './webhook.tokens';
 
@@ -42,6 +43,7 @@ export class WebhookInboundController {
     private readonly groupFetcher: GroupFetcher,
     @Inject(WEBHOOK_REDIS_CLIENT) private readonly redis: Redis,
     private readonly templateFollowups: TemplateFollowupsClient,
+    private readonly responseTime: ResponseTimeTracker,
     config: ConfigService<AppEnv, true>,
   ) {
     this.idempotencyTtlSeconds = config.get('IDEMPOTENCY_TTL_SECONDS', { infer: true });
@@ -190,6 +192,25 @@ export class WebhookInboundController {
     });
 
     const replyChannel = resolveInboundChannel(body);
+
+    // Start the advisor response-time clock for this contact (kept if an earlier
+    // message is still unanswered). One Redis SET NX; best-effort and not
+    // awaited so it can never delay or fail the AI pipeline below.
+    const addedMs = body.dateAdded ? Date.parse(body.dateAdded) : NaN;
+    this.responseTime
+      .registerInbound({
+        locationId,
+        contactId,
+        messageId: body.messageId,
+        channel: replyChannel,
+        inboundAt: Number.isNaN(addedMs) ? Date.now() : addedMs,
+      })
+      .catch((err) => {
+        this.logger.warn(
+          { locationId, contactId, err: (err as Error).message },
+          'response-time registerInbound failed (ignored)',
+        );
+      });
 
     // Per-group debounce override. The group is fetched (and cached by
     // GroupFetcher) here so a burst of messages shares one CHAT_API round-trip
