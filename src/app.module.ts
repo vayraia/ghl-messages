@@ -30,9 +30,10 @@ if (process.env.NODE_ENV !== 'test') {
 const metaOutboundEnabled = process.env.META_OUTBOUND_ENABLED === 'true';
 const metaOutboundImports = metaOutboundEnabled ? [DatabaseModule, MetaOutboundModule] : [];
 
-// Advisor response-time persistence also needs Postgres, so it is opt-in too.
-// DatabaseModule is deduplicated by Nest if META_OUTBOUND_ENABLED loads it as well.
-const responseTimeEnabled = process.env.RESPONSE_TIME_ENABLED === 'true';
+// Advisor response-time persistence also needs Postgres: it turns on by itself
+// whenever DATABASE_URL is set. DatabaseModule is deduplicated by Nest if
+// META_OUTBOUND_ENABLED loads it as well.
+const responseTimeEnabled = Boolean(process.env.DATABASE_URL?.trim());
 const responseTimeImports = responseTimeEnabled ? [DatabaseModule, ResponseTimeModule] : [];
 
 @Module({

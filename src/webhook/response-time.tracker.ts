@@ -52,7 +52,7 @@ export class ResponseTimeTracker {
     @InjectQueue(RESPONSE_TIME_QUEUE_TOKEN) private readonly queue: Queue,
     config: ConfigService<AppEnv, true>,
   ) {
-    this.enabled = config.get('RESPONSE_TIME_ENABLED', { infer: true }) === true;
+    this.enabled = Boolean(config.get('DATABASE_URL', { infer: true })?.trim());
     this.pendingTtlSeconds = config.get('RESPONSE_TIME_PENDING_TTL_SECONDS', { infer: true });
     this.aiGraceMs = config.get('RESPONSE_TIME_AI_GRACE_MS', { infer: true });
   }

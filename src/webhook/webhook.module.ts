@@ -41,7 +41,7 @@ class RedisClientLifecycle implements OnApplicationShutdown {
 @Module({
   imports: [
     // Queue only (Redis): the tracker enqueues here; the Postgres worker lives in
-    // ResponseTimeModule, loaded only when RESPONSE_TIME_ENABLED.
+    // ResponseTimeModule, loaded only when DATABASE_URL is set.
     BullModule.registerQueue({ name: RESPONSE_TIME_QUEUE_TOKEN }),
     BullModule.registerQueue({
       name: WEBHOOK_QUEUE_TOKEN,

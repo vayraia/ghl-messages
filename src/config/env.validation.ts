@@ -82,7 +82,6 @@ export interface AppEnv {
   // message keeps its clock running. AI_GRACE_MS: wait before treating an
   // outbound as human, so the AI's own messageId mark has time to land
   // (0 disables the wait).
-  RESPONSE_TIME_ENABLED: boolean;
   RESPONSE_TIME_PENDING_TTL_SECONDS: number;
   RESPONSE_TIME_AI_GRACE_MS: number;
 
@@ -141,13 +140,8 @@ export const envValidationSchema = Joi.object<AppEnv, true>({
 
   DATABASE_URL: Joi.string()
     .uri({ scheme: ['postgres', 'postgresql'] })
-    .when('META_OUTBOUND_ENABLED', { is: true, then: Joi.required(), otherwise: Joi.optional() })
-    .when('RESPONSE_TIME_ENABLED', { is: true, then: Joi.required() }),
+    .when('META_OUTBOUND_ENABLED', { is: true, then: Joi.required(), otherwise: Joi.optional() }),
   DATABASE_SSL: Joi.boolean().default(false),
-
-  // Opt-in advisor response-time tracking (needs DATABASE_URL). When off
-  // (default) the tracker is a no-op and no database connection is opened.
-  RESPONSE_TIME_ENABLED: Joi.boolean().default(false),
 
   GRAPH_API_BASE_URL: Joi.string()
     .uri({ scheme: ['http', 'https'] })

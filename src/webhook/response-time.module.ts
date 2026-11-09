@@ -8,7 +8,7 @@ import { RESPONSE_TIME_QUEUE_TOKEN } from './webhook.tokens';
 /**
  * Postgres persistence for advisor response times. Kept apart from
  * `WebhookModule` because it needs a TypeORM connection: `app.module.ts` only
- * loads it (together with `DatabaseModule`) when `RESPONSE_TIME_ENABLED=true`,
+ * loads it (together with `DatabaseModule`) when `DATABASE_URL` is set,
  * so the Redis-only inbound path still boots without a database.
  */
 @Module({

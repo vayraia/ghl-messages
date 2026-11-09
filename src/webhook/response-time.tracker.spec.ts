@@ -11,9 +11,9 @@ function makeTracker(graceMs = 0, enabled = true) {
     multi: jest.fn().mockReturnValue(multi),
   };
   const queue = { add: jest.fn().mockResolvedValue(undefined) };
-  const env: Record<string, number> = {
+  const env: Record<string, number | string | undefined> = {
+    DATABASE_URL: enabled ? 'postgres://x' : undefined,
     RESPONSE_TIME_PENDING_TTL_SECONDS: 600,
-    RESPONSE_TIME_ENABLED: enabled as unknown as number,
     RESPONSE_TIME_AI_GRACE_MS: graceMs,
   };
   const config = { get: (k: string) => env[k] } as unknown as ConfigService<AppEnv, true>;
@@ -105,7 +105,7 @@ describe('ResponseTimeTracker', () => {
     );
   });
 
-  it('is a complete no-op when RESPONSE_TIME_ENABLED is off (no Redis, no queue)', async () => {
+  it('is a complete no-op when DATABASE_URL is not set (no Redis, no queue)', async () => {
     const { tracker, redis, queue } = makeTracker(0, false);
     await tracker.markAiSent('m_ai');
     await tracker.registerInbound({ locationId: 'l', contactId: 'c', inboundAt: 1 });
