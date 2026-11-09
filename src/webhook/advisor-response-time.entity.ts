@@ -2,8 +2,9 @@ import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 
 
 /**
  * First advisor reply to a contact's unanswered message, with the elapsed time.
- * Schema is managed by migrations (`synchronize` is always off); the decorators
- * mirror `1780000000000-CreateAdvisorResponseTimes`.
+ * The schema is NOT created by this repo: it lives in the `ai` repo as
+ * `migrations/053_advisor_response_times.sql`, applied by hand with `psql`
+ * (`synchronize` is always off). The decorators mirror that file.
  */
 @Entity({ name: 'advisor_response_times' })
 @Index('idx_advisor_response_times_loc_user_replied', ['locationId', 'userId', 'repliedAt'])

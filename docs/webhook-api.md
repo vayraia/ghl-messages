@@ -505,13 +505,15 @@ Independent of the above (and post-ack), every `sent`/`delivered`
 4. A worker inserts one row into `advisor_response_times`
    (`location_id`, `contact_id`, `user_id`, `channel`, `inbound_message_id`,
    `outbound_message_id` unique, `inbound_at`, `replied_at`,
-   `response_seconds`). Run `npm run migration:run` to create the table.
+   `response_seconds`). The table is created by hand with
+   `psql "$DATABASE_URL" -f migrations/053_advisor_response_times.sql` from the
+   `ai` repo (idempotent).
 
 Only the **first** advisor reply after a contact message is recorded; contacts
 nobody answers produce no row.
 
 **Needs Postgres.** It turns on by itself when `DATABASE_URL` is set (the same
-Postgres `ai` reads for the report) and then needs `npm run migration:run`.
+Postgres `ai` reads for the report) and then needs that table (see above).
 Without `DATABASE_URL` the tracker does nothing and no database connection is
 opened, so the Redis-only deployment keeps booting.
 
