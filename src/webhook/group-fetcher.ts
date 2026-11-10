@@ -65,6 +65,10 @@ export interface GroupSettings {
   // When true, an inbound WhatsApp ad-lead message re-enables the AI for a
   // blocked contact (clears the "desactivar ia" tag / ai_field Disabled).
   aiReactivation?: boolean;
+  // When true, an outbound message written by a human agent (a `userId` that is
+  // not an AI-sent messageId and not a non-blocking user) tags the contact with
+  // "desactivar ia". Only a real boolean counts; default off.
+  disableAiOnHumanMessage?: boolean;
 }
 
 interface GroupResponse {
@@ -84,6 +88,7 @@ interface GroupResponse {
     stop_message?: unknown;
     start_message?: unknown;
     ai_reactivation?: unknown;
+    disable_ai_on_human_message?: unknown;
     [key: string]: unknown;
   };
   [key: string]: unknown;
@@ -187,6 +192,9 @@ export class GroupFetcher {
         stopMessage: parseStopMessage(body.general_settings?.stop_message),
         startMessage: parseStopMessage(body.general_settings?.start_message),
         aiReactivation: parseAiReactivation(body.general_settings?.ai_reactivation),
+        disableAiOnHumanMessage: parseAiReactivation(
+          body.general_settings?.disable_ai_on_human_message,
+        ),
       };
       if (this.cacheTtlMs > 0) {
         this.cache.set(locationId, {

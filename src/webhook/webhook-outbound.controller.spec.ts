@@ -3,6 +3,7 @@ import { UnrecoverableError } from 'bullmq';
 import { OutboundWebhookPayloadDto } from './dto/outbound-webhook-payload.dto';
 import { GhlContactClient } from './ghl-contact-client';
 import { GroupFetcher, GroupSettings } from './group-fetcher';
+import { AI_DISABLE_TAG } from './webhook.processor';
 import { InsistenceClient } from './insistence-client';
 import { ResponseTimeTracker } from './response-time.tracker';
 import { WebhookOutboundController } from './webhook-outbound.controller';
@@ -10,6 +11,7 @@ import { AppEnv } from '../config/env.validation';
 
 interface RedisMock {
   set: jest.Mock;
+  del: jest.Mock;
 }
 
 function makeController() {
@@ -27,9 +29,13 @@ function makeController() {
     schedule: jest.fn(),
     cancel: jest.fn().mockResolvedValue(undefined),
   } as unknown as jest.Mocked<InsistenceClient>;
-  const redis: RedisMock = { set: jest.fn().mockResolvedValue('OK') };
+  const redis: RedisMock = {
+    set: jest.fn().mockResolvedValue('OK'),
+    del: jest.fn().mockResolvedValue(1),
+  };
   const responseTime = {
     recordAdvisorReply: jest.fn().mockResolvedValue('recorded'),
+    wasSentByAi: jest.fn().mockResolvedValue(false),
   } as unknown as jest.Mocked<ResponseTimeTracker>;
 
   const env: Record<string, number | string> = {
@@ -87,8 +93,10 @@ describe('WebhookOutboundController', () => {
     const { controller, groupFetcher, insistenceClient } = makeController();
     const r = await controller.outbound(payload({ status: 'sent' }));
     expect(r).toEqual({ ok: true });
-    expect(groupFetcher.fetch).not.toHaveBeenCalled();
+    // The legacy disable/cancel flow stays off. (The group IS fetched now, in the
+    // background, to read the human-takeover flag — covered in its own describe.)
     expect(insistenceClient.cancel).not.toHaveBeenCalled();
+    void groupFetcher;
   });
 
   it('skips with 200 when userId is missing (bot message — not a human takeover)', async () => {
@@ -670,5 +678,95 @@ describe('WebhookOutboundController advisor response-time tracking', () => {
       payload(over as Partial<OutboundWebhookPayloadDto>),
     );
     expect(responseTime.recordAdvisorReply).not.toHaveBeenCalled();
+  });
+});
+
+describe('WebhookOutboundController human takeover (disable_ai_on_human_message)', () => {
+  type Takeover = {
+    handleHumanTakeover(body: OutboundWebhookPayloadDto): Promise<boolean | undefined>;
+  };
+
+  function setup(group: Partial<GroupSettings> = {}) {
+    const ctx = makeController();
+    ctx.groupFetcher.fetch.mockResolvedValue({
+      apiKey: 'k',
+      disableAiOnHumanMessage: true,
+      ...group,
+    } as GroupSettings);
+    const run = (over: Partial<OutboundWebhookPayloadDto> = {}) =>
+      (ctx.controller as unknown as Takeover).handleHumanTakeover(payload(over));
+    return { ...ctx, run };
+  }
+
+  it('tags the contact when a human agent writes and the flag is on', async () => {
+    const { run, updater } = setup();
+    await expect(run()).resolves.toBe(true);
+    expect(updater.addTags).toHaveBeenCalledWith({
+      jobId: 'm_1',
+      contactId: 'c_1',
+      apiKey: 'k',
+      tags: [AI_DISABLE_TAG],
+    });
+  });
+
+  it('does nothing when the flag is off or absent (default)', async () => {
+    const { run, updater } = setup({ disableAiOnHumanMessage: undefined });
+    await expect(run()).resolves.toBeUndefined();
+    expect(updater.addTags).not.toHaveBeenCalled();
+  });
+
+  it('never tags a message without userId (sent through the API)', async () => {
+    const { run, updater, groupFetcher } = setup();
+    await expect(run({ userId: undefined })).resolves.toBeUndefined();
+    expect(updater.addTags).not.toHaveBeenCalled();
+    expect(groupFetcher.fetch).not.toHaveBeenCalled();
+  });
+
+  it('never tags a message the AI sent (same userId as the assigned agent)', async () => {
+    const { run, updater, responseTime } = setup();
+    responseTime.wasSentByAi.mockResolvedValue(true);
+    await expect(run()).resolves.toBe(false);
+    expect(updater.addTags).not.toHaveBeenCalled();
+  });
+
+  it('ignores users listed in non_blocking_users', async () => {
+    const { run, updater } = setup({ nonBlockingUsers: [{ id: 'u_1' }] as never });
+    await expect(run()).resolves.toBe(false);
+    expect(updater.addTags).not.toHaveBeenCalled();
+  });
+
+  it('leaves stop/start phrases to the stop_message logic (no re-tag on start_message)', async () => {
+    const { run, updater } = setup({ stopMessage: 'Stop', startMessage: 'Start' });
+    await expect(run({ body: ' start ' })).resolves.toBe(false);
+    await expect(run({ body: 'STOP' })).resolves.toBe(false);
+    expect(updater.addTags).not.toHaveBeenCalled();
+  });
+
+  it('handles a message once even if GHL sends both sent and delivered', async () => {
+    const { run, updater, redis } = setup();
+    await run({ status: 'sent' });
+    redis.set.mockResolvedValue(null);
+    await expect(run({ status: 'delivered' })).resolves.toBeUndefined();
+    expect(updater.addTags).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores other statuses and types', async () => {
+    const { run, updater } = setup();
+    await expect(run({ status: 'read' })).resolves.toBeUndefined();
+    await expect(run({ type: 'InboundMessage' })).resolves.toBeUndefined();
+    expect(updater.addTags).not.toHaveBeenCalled();
+  });
+
+  it('releases the dedup key and rethrows on a retryable tag failure', async () => {
+    const { run, updater, redis } = setup();
+    updater.addTags.mockRejectedValue(new Error('boom'));
+    await expect(run()).rejects.toThrow('boom');
+    expect(redis.del).toHaveBeenCalledWith('webhook:outbound:takeover:m_1');
+  });
+
+  it('swallows a permanent tag failure', async () => {
+    const { run, updater } = setup();
+    updater.addTags.mockRejectedValue(new UnrecoverableError('bad'));
+    await expect(run()).resolves.toBe(false);
   });
 });

@@ -57,9 +57,13 @@ export class ResponseTimeTracker {
     this.aiGraceMs = config.get('RESPONSE_TIME_AI_GRACE_MS', { infer: true });
   }
 
-  /** Remembers that the AI sent this GHL messageId, so its outbound webhook isn't counted as an advisor. */
+  /**
+   * Remembers that the AI sent this GHL messageId, so its outbound webhook isn't
+   * taken for a human. Redis-only, so it works with or without Postgres (the
+   * human-takeover tag depends on it; only persistence needs DATABASE_URL).
+   */
   async markAiSent(messageId: string | undefined): Promise<void> {
-    if (!this.enabled || !messageId) return;
+    if (!messageId) return;
     await this.redis.set(aiSentKey(messageId), '1', 'EX', AI_SENT_TTL_SECONDS);
   }
 
@@ -103,15 +107,7 @@ export class ResponseTimeTracker {
     repliedAt: number;
   }): Promise<AdvisorReplyOutcome> {
     if (!this.enabled) return 'no_pending';
-    if (await this.isAiSent(input.messageId)) return 'ai_message';
-
-    // The outbound webhook can beat our own POST /conversations/messages
-    // response, so the AI mark may not exist yet. Re-check once after a short
-    // grace; this runs post-ack, so waiting costs nobody latency.
-    if (this.aiGraceMs > 0) {
-      await new Promise((resolve) => setTimeout(resolve, this.aiGraceMs));
-      if (await this.isAiSent(input.messageId)) return 'ai_message';
-    }
+    if (await this.wasSentByAi(input.messageId)) return 'ai_message';
 
     const key = pendingKey(input.locationId, input.contactId);
     const results = await this.redis.multi().get(key).del(key).exec();
@@ -149,6 +145,21 @@ export class ResponseTimeTracker {
       'advisor reply enqueued for response-time persistence',
     );
     return 'recorded';
+  }
+
+  /**
+   * True when the AI sent this messageId. The outbound webhook can beat our own
+   * POST /conversations/messages response, so the mark may not exist yet:
+   * re-check once after a short grace. Runs post-ack, so waiting costs nobody
+   * latency.
+   */
+  async wasSentByAi(messageId: string): Promise<boolean> {
+    if (await this.isAiSent(messageId)) return true;
+    if (this.aiGraceMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this.aiGraceMs));
+      return this.isAiSent(messageId);
+    }
+    return false;
   }
 
   private async isAiSent(messageId: string): Promise<boolean> {

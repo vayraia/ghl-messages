@@ -573,6 +573,29 @@ describe('GroupFetcher', () => {
     });
   });
 
+  describe('disable_ai_on_human_message', () => {
+    it('parses a boolean flag', async () => {
+      const { fetcher, get } = makeFetcher();
+      get.mockResolvedValue({
+        status: 200,
+        data: { api_key: 'sk', general_settings: { disable_ai_on_human_message: true } },
+      });
+      expect((await fetcher.fetch('loc_abc', 'job-1')).disableAiOnHumanMessage).toBe(true);
+    });
+
+    it('is undefined (off) when missing or not a real boolean', async () => {
+      const { fetcher, get } = makeFetcher();
+      get.mockResolvedValue({ status: 200, data: { api_key: 'sk', general_settings: {} } });
+      expect((await fetcher.fetch('loc_abc', 'job-1')).disableAiOnHumanMessage).toBeUndefined();
+
+      get.mockResolvedValue({
+        status: 200,
+        data: { api_key: 'sk', general_settings: { disable_ai_on_human_message: 'true' } },
+      });
+      expect((await fetcher.fetch('loc_abc', 'job-1')).disableAiOnHumanMessage).toBeUndefined();
+    });
+  });
+
   describe('message_agents', () => {
     it('parses message_agents entries with message and agent_id', async () => {
       const { fetcher, get } = makeFetcher();

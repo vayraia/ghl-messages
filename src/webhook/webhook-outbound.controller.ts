@@ -82,6 +82,15 @@ export class WebhookOutboundController {
         );
       });
 
+    // Human takeover (per-group flag): a message written by a human agent tags the
+    // contact with AI_DISABLE_TAG. Independent and post-ack like the others.
+    this.handleHumanTakeover(body).catch((err) => {
+      this.logger.error(
+        { messageId: body.messageId, contactId: body.contactId, err: (err as Error).message },
+        'human takeover processing failed (post-ack)',
+      );
+    });
+
     // Advisor response-time tracking: independent of the stop_message path above
     // and equally post-ack, so neither can delay or break the other.
     this.trackAdvisorReply(body).catch((err) => {
@@ -244,6 +253,86 @@ export class WebhookOutboundController {
   }
 
   /**
+   * Group flag `general_settings.disable_ai_on_human_message`: when a HUMAN agent
+   * writes to the contact, tags it with `AI_DISABLE_TAG` so the AI stops.
+   *
+   * "Human" = a `sent`/`delivered` OutboundMessage that carries a `userId` and
+   * whose messageId the AI did NOT send (see `ResponseTimeTracker.markAiSent`).
+   * No `userId` means the message came through the API (AI, automations), which
+   * never counts. Users in `non_blocking_users` are ignored, and the group's
+   * stop/start phrases are left to `handleStopMessage` (a human sending the
+   * start phrase must not be re-tagged here).
+   *
+   * Returns `undefined` when not applicable, `false` when skipped, `true` once
+   * the tag write succeeds.
+   */
+  private async handleHumanTakeover(body: OutboundWebhookPayloadDto): Promise<boolean | undefined> {
+    if (body.type !== 'OutboundMessage') return undefined;
+    if (body.status !== 'sent' && body.status !== 'delivered') return undefined;
+
+    const locationId = body.locationId?.trim();
+    const contactId = body.contactId?.trim();
+    const userId = body.userId?.trim();
+    const messageId = body.messageId?.trim();
+    if (!locationId || !contactId || !userId || !messageId) return undefined;
+
+    let group;
+    try {
+      group = await this.groupFetcher.fetch(locationId, messageId);
+    } catch (err) {
+      if (err instanceof UnrecoverableError) {
+        this.logger.warn(
+          { messageId, contactId, err: err.message },
+          'human takeover: group fetch failed permanently — swallowed',
+        );
+        return false;
+      }
+      throw err;
+    }
+
+    if (!group.disableAiOnHumanMessage) return undefined;
+    if (group.nonBlockingUsers?.some((u) => u.id === userId)) return false;
+
+    const text = body.body?.trim().toLowerCase() ?? '';
+    if (text) {
+      const stop = group.stopMessage?.trim().toLowerCase();
+      const start = group.startMessage?.trim().toLowerCase();
+      if (text === stop || text === start) return false;
+    }
+
+    // GHL emits `sent` and later `delivered` for the same message: handle it once.
+    const key = takeoverKey(messageId);
+    const fresh = await this.redis.set(key, '1', 'EX', this.idempotencyTtlSeconds, 'NX');
+    if (fresh === null) return undefined;
+
+    try {
+      if (await this.responseTime.wasSentByAi(messageId)) return false;
+      await this.contactClient.addTags({
+        jobId: messageId,
+        contactId,
+        apiKey: group.apiKey,
+        tags: [AI_DISABLE_TAG],
+      });
+      this.logger.log(
+        { messageId, contactId, locationId, userId },
+        'human agent wrote — tagged contact to disable the AI',
+      );
+      return true;
+    } catch (err) {
+      // Let a later `sent`/`delivered` event retry instead of losing the takeover.
+      await this.redis.del(key).catch(() => undefined);
+      if (err instanceof UnrecoverableError) {
+        this.logger.warn(
+          { messageId, contactId, err: err.message },
+          'human takeover: add-tags failed permanently — swallowed',
+        );
+        return false;
+      }
+      throw err;
+    }
+  }
+
+  /**
    * Closes the response-time clock when an advisor (a `userId` that is NOT the
    * AI's own send, see `ResponseTimeTracker.markAiSent`) answers the contact.
    * GHL stamps the assigned agent's `userId` on AI-sent messages too, which is
@@ -399,6 +488,10 @@ export class WebhookOutboundController {
       return undefined;
     }
   }
+}
+
+function takeoverKey(messageId: string): string {
+  return `webhook:outbound:takeover:${messageId}`;
 }
 
 function outboundIdempotencyKey(messageId: string): string {

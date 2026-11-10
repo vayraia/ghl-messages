@@ -485,6 +485,18 @@ Failure handling on the contact PUT matches the rest of the pipeline: `4xx`
 is treated as a misconfiguration and swallowed (returns `200`), while `5xx` /
 network errors are re-thrown so GHL retries the webhook.
 
+### Human takeover: `disable_ai_on_human_message`
+
+Per-group flag in `general_settings` (boolean, **off by default**). When on, a
+`sent`/`delivered` `OutboundMessage` written by a **human agent** tags the
+contact with `desactivar ia`, so the AI stops answering. A message counts as
+human when it carries a `userId` **and** its `messageId` is not one the AI sent
+(`webhook:ai-sent:{id}`, re-checked once after `RESPONSE_TIME_AI_GRACE_MS`).
+Not tagged: messages with no `userId` (sent through the API), users in
+`non_blocking_users`, and messages equal to `stop_message`/`start_message`
+(those keep their own logic). `sent` and `delivered` of the same message are
+handled once. Works with or without `DATABASE_URL`.
+
 ### Advisor response-time tracking
 
 Independent of the above (and post-ack), every `sent`/`delivered`

@@ -105,14 +105,25 @@ describe('ResponseTimeTracker', () => {
     );
   });
 
-  it('is a complete no-op when DATABASE_URL is not set (no Redis, no queue)', async () => {
+  it('persistence is a no-op without DATABASE_URL, but the AI mark still works (Redis only)', async () => {
     const { tracker, redis, queue } = makeTracker(0, false);
-    await tracker.markAiSent('m_ai');
     await tracker.registerInbound({ locationId: 'l', contactId: 'c', inboundAt: 1 });
     await expect(tracker.recordAdvisorReply(reply)).resolves.toBe('no_pending');
     expect(redis.set).not.toHaveBeenCalled();
-    expect(redis.exists).not.toHaveBeenCalled();
     expect(redis.multi).not.toHaveBeenCalled();
     expect(queue.add).not.toHaveBeenCalled();
+
+    await tracker.markAiSent('m_ai');
+    expect(redis.set).toHaveBeenCalledWith('webhook:ai-sent:m_ai', '1', 'EX', 3600);
+  });
+
+  it('wasSentByAi works without DATABASE_URL and re-checks after the grace window', async () => {
+    const { tracker, redis } = makeTracker(5, false);
+    redis.exists.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+    await expect(tracker.wasSentByAi('m_x')).resolves.toBe(true);
+    expect(redis.exists).toHaveBeenCalledTimes(2);
+
+    redis.exists.mockReset().mockResolvedValue(0);
+    await expect(tracker.wasSentByAi('m_y')).resolves.toBe(false);
   });
 });
