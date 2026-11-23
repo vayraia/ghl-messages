@@ -38,7 +38,7 @@ describe('OAuthController.callback', () => {
 
     const body = await controller.callback(res as never, 'abc123', undefined);
 
-    expect(get).toHaveBeenCalledWith('/ghl/oauth/callback', { params: { code: 'abc123' } });
+    expect(get).toHaveBeenCalledWith('/ghl/oauth/billing/callback', { params: { code: 'abc123' } });
     expect(res.type).toHaveBeenCalledWith('html');
     expect(res.status).toHaveBeenCalledWith(200);
     expect(body).toBe('<h1>Instalación completada</h1>');
@@ -50,7 +50,9 @@ describe('OAuthController.callback', () => {
 
     const body = await controller.callback(res as never, undefined, 'access_denied');
 
-    expect(get).toHaveBeenCalledWith('/ghl/oauth/callback', { params: { error: 'access_denied' } });
+    expect(get).toHaveBeenCalledWith('/ghl/oauth/billing/callback', {
+      params: { error: 'access_denied' },
+    });
     expect(res.status).toHaveBeenCalledWith(400);
     expect(body).toContain('cancelada');
   });
@@ -77,6 +79,6 @@ describe('OAuthController.callback', () => {
     const { controller, get, res } = makeController();
     get.mockResolvedValue({ status: 400, data: '' });
     await controller.callback(res as never, undefined, undefined);
-    expect(get).toHaveBeenCalledWith('/ghl/oauth/callback', { params: {} });
+    expect(get).toHaveBeenCalledWith('/ghl/oauth/billing/callback', { params: {} });
   });
 });

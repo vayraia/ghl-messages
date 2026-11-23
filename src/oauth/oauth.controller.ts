@@ -4,21 +4,23 @@ import axios, { AxiosInstance } from 'axios';
 import type { Response } from 'express';
 import { AppEnv } from '../config/env.validation';
 
-const UPSTREAM_PATH = '/ghl/oauth/callback';
+const UPSTREAM_PATH = '/ghl/oauth/billing/callback';
 
 const BAD_GATEWAY_PAGE = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>No se pudo completar la instalación</title></head><body><h1>No se pudo completar la instalación</h1><p>Intenta instalar de nuevo.</p></body></html>`;
 
 /**
- * Redirect URL registered in the GHL Marketplace app. GHL sends the browser
- * here after a sub-account authorizes the app.
+ * Redirect URL registered in the GHL Marketplace app that owns the AI billing
+ * meter (the billing app, not the payments app). GHL sends the browser here
+ * after the agency installs the app.
  *
  * This service does not own the install tokens: the `ai` backend exchanges the
- * authorization `code` for tokens and stores them encrypted per location
- * (`ghl_installations`). So this endpoint only forwards the `code` (or `error`)
- * server-to-server to `CHAT_API_URL/ghl/oauth/callback` and relays that page.
+ * authorization `code` with the billing app credentials and stores the agency
+ * token encrypted. So this endpoint only forwards the `code` (or `error`)
+ * server-to-server to `CHAT_API_URL/ghl/oauth/billing/callback` and relays that
+ * page.
  *
  * The URL GHL calls — and therefore the `redirect_uri` of the token exchange —
- * stays this one, so `ai` must have `GHL_OAUTH_REDIRECT_URI` set to it.
+ * stays this one, so `ai` must have `GHL_BILLING_OAUTH_REDIRECT_URI` set to it.
  * The authorization `code` is single-use and sensitive: it is never logged.
  */
 @Controller({ path: 'oauth', version: ['1'] })

@@ -531,17 +531,20 @@ opened, so the Redis-only deployment keeps booting.
 
 ## `GET /v1/oauth/callback`
 
-Redirect URL registered in the GHL Marketplace app: GHL sends the browser here
-after a sub-account authorizes the app. This service does not keep the tokens;
-the `ai` backend does (`ghl_installations`, encrypted, with refresh). So the
-endpoint only forwards `code` (or `error`) server-to-server to
-`CHAT_API_URL/ghl/oauth/callback` and relays the status and HTML page `ai`
-answers (`200` installed, `400` cancelled / agency-level install, `502`/`503`
-exchange failed / not configured). If `ai` is unreachable it answers `502` with
-a short page. The `code` is single-use and is never logged.
+Redirect URL registered in the GHL Marketplace app that owns the AI billing
+meter (the **billing app**, not the payments app). GHL sends the browser here
+after the agency installs it. This service does not keep the tokens; the `ai`
+backend does (agency token, encrypted, with refresh). So the endpoint only
+forwards `code` (or `error`) server-to-server to
+`CHAT_API_URL/ghl/oauth/billing/callback` and relays the status and HTML page
+`ai` answers (`200` installed, `400` cancelled / not an agency install, `403`
+agency not allowed, `502`/`503` exchange failed / not configured). If `ai` is
+unreachable it answers `502` with a short page. The `code` is single-use and is
+never logged.
 
 Because the `redirect_uri` of the token exchange must equal the URL GHL used,
-`ai` needs `GHL_OAUTH_REDIRECT_URI=https://<this-host>/v1/oauth/callback`.
+`ai` needs
+`GHL_BILLING_OAUTH_REDIRECT_URI=https://<this-host>/v1/oauth/callback`.
 
 ## `GET /v1/health/live`
 
