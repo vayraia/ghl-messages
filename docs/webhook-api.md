@@ -529,6 +529,20 @@ Postgres `ai` reads for the report) and then needs that table (see above).
 Without `DATABASE_URL` the tracker does nothing and no database connection is
 opened, so the Redis-only deployment keeps booting.
 
+## `GET /v1/oauth/callback`
+
+Redirect URL registered in the GHL Marketplace app: GHL sends the browser here
+after a sub-account authorizes the app. This service does not keep the tokens;
+the `ai` backend does (`ghl_installations`, encrypted, with refresh). So the
+endpoint only forwards `code` (or `error`) server-to-server to
+`CHAT_API_URL/ghl/oauth/callback` and relays the status and HTML page `ai`
+answers (`200` installed, `400` cancelled / agency-level install, `502`/`503`
+exchange failed / not configured). If `ai` is unreachable it answers `502` with
+a short page. The `code` is single-use and is never logged.
+
+Because the `redirect_uri` of the token exchange must equal the URL GHL used,
+`ai` needs `GHL_OAUTH_REDIRECT_URI=https://<this-host>/v1/oauth/callback`.
+
 ## `GET /v1/health/live`
 
 Liveness probe. Returns `{ "status": "ok" }` as long as the process is
