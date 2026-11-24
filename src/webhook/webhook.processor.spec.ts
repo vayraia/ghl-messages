@@ -2203,3 +2203,30 @@ describe('WebhookProcessor AI billing notification', () => {
     await expect(processor.process(makeJob())).resolves.toBeDefined();
   });
 });
+
+describe('WebhookProcessor suspended chat reply', () => {
+  function arrange() {
+    const ctx = makeProcessor();
+    (ctx.debouncer.drain as jest.Mock).mockResolvedValue(sampleItems);
+    (ctx.groupFetcher.fetch as jest.Mock).mockResolvedValue({
+      apiKey: 'k',
+      insistences: [{ hours: 0, minutes: 10 }],
+    });
+    (ctx.forwarder.forward as jest.Mock).mockResolvedValue({
+      messages: [],
+      durationMs: 5,
+      suspended: 'billing_unpaid_limit',
+    });
+    return ctx;
+  }
+
+  it('sends nothing, schedules no insistence and does not notify billing', async () => {
+    const { processor, ghl, insistence, aiBilling, responseTime } = arrange();
+    const result = await processor.process(makeJob());
+    expect(result).toMatchObject({ ok: true, skipped: 'billing_suspended' });
+    expect(ghl.send).not.toHaveBeenCalled();
+    expect(insistence.schedule).not.toHaveBeenCalled();
+    expect(aiBilling.notifyReply).not.toHaveBeenCalled();
+    expect(responseTime.markAiSent).not.toHaveBeenCalled();
+  });
+});

@@ -541,6 +541,16 @@ backoff), so the HTTP call can never delay or fail a reply. A `4xx` other than `
 is a misconfiguration and is not retried. **It is off unless `AI_SERVICE_API_KEY` is
 set** (the service key `ai` requires); blank means off.
 
+### Suspended replies
+
+`ai` can decide not to answer a contact (for example when the group reached its
+unpaid-contacts limit) by replying `200 { "messages": [], "suspended": true,
+"reason": "billing_unpaid_limit" }`. That is a normal outcome, not an error: the
+flush job ends with `skipped: "billing_suspended"`, nothing is sent to the contact,
+no insistence is scheduled, nothing is billed and nothing is retried. An empty
+`messages` array WITHOUT `suspended: true` is still a contract violation
+(non-retryable error), as before.
+
 ## `GET /v1/oauth/callback`
 
 Redirect URL registered in the GHL Marketplace app that owns the AI billing

@@ -34,6 +34,12 @@ export type ChatMessage =
 export interface ChatResponse {
   messages: ChatMessage[];
   durationMs: number;
+  /**
+   * Set when the AI service deliberately produced NO reply (e.g. the group reached
+   * its unpaid-contacts limit): `{ messages: [], suspended: true, reason }`. It is a
+   * normal outcome, not an error: nothing is sent and nothing is retried.
+   */
+  suspended?: string;
 }
 
 /**
@@ -42,6 +48,8 @@ export interface ChatResponse {
  *
  * Failure handling matches BullMQ's retry contract:
  *  - 2xx with a non-empty `messages` array of valid entries → success.
+ *  - 2xx with `suspended: true` and no messages → success with `suspended` set
+ *    (the service chose not to answer; see `ChatResponse.suspended`).
  *  - 2xx with a missing/empty/invalid `messages` field → `UnrecoverableError`
  *    (contract violation — retrying won't help).
  *  - 4xx → `UnrecoverableError` (no retry).
@@ -150,6 +158,14 @@ export class WebhookForwarder {
     const { status } = response;
 
     if (status >= 200 && status < 300) {
+      const suspended = extractSuspended(response.data);
+      if (suspended) {
+        this.logger.log(
+          { jobId: req.jobId, status, durationMs, reason: suspended },
+          'Chat API suspended the reply (no message to send)',
+        );
+        return { messages: [], durationMs, suspended };
+      }
       const messages = extractMessages(response.data);
       if (!messages) {
         this.logger.warn(
@@ -189,6 +205,21 @@ export class WebhookForwarder {
     );
     throw new Error(`Chat API returned ${status}: ${summary}`);
   }
+}
+
+/**
+ * `{ messages: [], suspended: true, reason? }` → the reason (or `suspended`).
+ * Anything else — including `suspended` next to real messages — is not a suspension,
+ * so a malformed answer still hits the normal contract checks.
+ */
+function extractSuspended(data: unknown): string | undefined {
+  if (!data || typeof data !== 'object') return undefined;
+  const d = data as { suspended?: unknown; reason?: unknown; messages?: unknown };
+  if (d.suspended !== true) return undefined;
+  if (d.messages !== undefined && !(Array.isArray(d.messages) && d.messages.length === 0)) {
+    return undefined;
+  }
+  return typeof d.reason === 'string' && d.reason.trim() ? d.reason.trim() : 'suspended';
 }
 
 /**

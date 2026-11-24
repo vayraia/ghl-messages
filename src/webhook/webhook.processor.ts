@@ -59,7 +59,13 @@ export interface FlushResult {
   chatStatus?: number;
   ghlStatus?: number;
   totalMs: number;
-  skipped?: 'ai_disabled' | 'ai_disabled_tag' | 'no_default_agent' | 'ai_off_hours' | 'video';
+  skipped?:
+    | 'ai_disabled'
+    | 'ai_disabled_tag'
+    | 'no_default_agent'
+    | 'ai_off_hours'
+    | 'video'
+    | 'billing_suspended';
 }
 
 /**
@@ -506,6 +512,22 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
       receivedAt,
       requestId,
     });
+
+    // The AI service chose not to answer (e.g. the group reached its unpaid-contacts
+    // limit). Nothing to send, nothing to bill, no insistence to schedule.
+    if (chat.suspended) {
+      this.logger.log(
+        { jobId: job.id, contactId, locationId, reason: chat.suspended },
+        'AI reply suspended by the chat service — nothing sent',
+      );
+      return {
+        ok: true,
+        drained: drainedCount,
+        chatStatus: 200,
+        totalMs: Date.now() - started,
+        skipped: 'billing_suspended',
+      };
+    }
 
     let lastStatus: number | undefined;
     let sent = 0;

@@ -506,3 +506,48 @@ describe('WebhookForwarder', () => {
     expect(err.message).toMatch(/…/);
   });
 });
+
+describe('WebhookForwarder suspended replies', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('treats { messages: [], suspended: true, reason } as a normal no-reply (not an error)', async () => {
+    const { forwarder, post } = makeForwarder();
+    post.mockResolvedValue({
+      status: 200,
+      data: { messages: [], suspended: true, reason: 'billing_unpaid_limit' },
+    });
+    const result = await forwarder.forward(baseReq);
+    expect(result.messages).toEqual([]);
+    expect(result.suspended).toBe('billing_unpaid_limit');
+  });
+
+  it('accepts a suspension without messages or reason', async () => {
+    const { forwarder, post } = makeForwarder();
+    post.mockResolvedValue({ status: 200, data: { suspended: true } });
+    const result = await forwarder.forward(baseReq);
+    expect(result.messages).toEqual([]);
+    expect(result.suspended).toBe('suspended');
+  });
+
+  it('does not treat suspended:true next to real messages as a suspension', async () => {
+    const { forwarder, post } = makeForwarder();
+    post.mockResolvedValue({
+      status: 200,
+      data: { messages: [{ type: 'text', content: 'hola' }], suspended: true },
+    });
+    const result = await forwarder.forward(baseReq);
+    expect(result.suspended).toBeUndefined();
+    expect(result.messages).toHaveLength(1);
+  });
+
+  it.each([{ suspended: false }, { suspended: 'true' }, {}])(
+    'still rejects an empty reply that is not a real suspension (%j)',
+    async (extra) => {
+      const { forwarder, post } = makeForwarder();
+      post.mockResolvedValue({ status: 200, data: { messages: [], ...extra } });
+      await expect(forwarder.forward(baseReq)).rejects.toBeInstanceOf(UnrecoverableError);
+    },
+  );
+});
