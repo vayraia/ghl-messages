@@ -44,6 +44,10 @@ export interface AppEnv {
 
   CHAT_API_URL: string;
   CHAT_API_TIMEOUT_MS: number;
+  // Service key of the `ai` backend (X-API-Key). When set, every AI reply that GHL
+  // accepted is reported to ai (POST /billing/ai-contacts/register) so it can count
+  // the contact for the month. Unset/blank = the feature is off.
+  AI_SERVICE_API_KEY?: string;
 
   // Shared secret the chat API requires to expose per-group secrets (the
   // group's `api_key`). When set, it is sent as the `X-Group-Secrets-Key`
@@ -174,6 +178,7 @@ export const envValidationSchema = Joi.object<AppEnv, true>({
     .uri({ scheme: ['http', 'https'] })
     .required(),
   CHAT_API_TIMEOUT_MS: Joi.number().integer().min(100).default(15_000),
+  AI_SERVICE_API_KEY: Joi.string().allow('').optional(),
   // Optional — allowed to be empty so an unused placeholder in .env behaves
   // exactly like an absent var (no header sent).
   GROUP_SECRETS_API_KEY: Joi.string().allow('').optional(),

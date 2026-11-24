@@ -8,6 +8,7 @@ import { GhlReply } from './ghl-reply';
 import { AttachmentClassifier } from './attachment-classifier';
 import { GroupFetcher } from './group-fetcher';
 import { InsistenceClient } from './insistence-client';
+import { AiBillingNotifier } from './ai-billing-notifier';
 import { ResponseTimeTracker } from './response-time.tracker';
 import { WEBHOOK_FLUSH_JOB } from './webhook.tokens';
 import { AppEnv } from '../config/env.validation';
@@ -19,6 +20,9 @@ function makeProcessor() {
   const responseTime = {
     markAiSent: jest.fn().mockResolvedValue(undefined),
   } as unknown as ResponseTimeTracker;
+  const aiBilling = {
+    notifyReply: jest.fn().mockResolvedValue(undefined),
+  } as unknown as AiBillingNotifier;
   const classifier = {
     partitionVideos: jest
       .fn()
@@ -63,10 +67,12 @@ function makeProcessor() {
     insistence,
     contactClient,
     responseTime,
+    aiBilling,
   );
 
   return {
     responseTime,
+    aiBilling,
     processor,
     debouncer,
     forwarder,
@@ -2153,6 +2159,47 @@ describe('WebhookProcessor AI-sent marking', () => {
   it('still completes the job when marking fails', async () => {
     const { processor, responseTime } = arrange({ status: 200, durationMs: 3, messageId: 'msg_ai' });
     (responseTime.markAiSent as jest.Mock).mockRejectedValue(new Error('redis down'));
+    await expect(processor.process(makeJob())).resolves.toBeDefined();
+  });
+});
+
+describe('WebhookProcessor AI billing notification', () => {
+  function arrange(sendResult: unknown, sendFails = false) {
+    const ctx = makeProcessor();
+    (ctx.debouncer.drain as jest.Mock).mockResolvedValue(sampleItems);
+    (ctx.groupFetcher.fetch as jest.Mock).mockResolvedValue({ apiKey: 'k', insistences: [] });
+    (ctx.forwarder.forward as jest.Mock).mockResolvedValue({
+      messages: [{ type: 'text', content: 'reply' }],
+      durationMs: 5,
+    });
+    if (sendFails) (ctx.ghl.send as jest.Mock).mockRejectedValue(new Error('GHL down'));
+    else (ctx.ghl.send as jest.Mock).mockResolvedValue(sendResult);
+    (ctx.insistence.schedule as jest.Mock).mockResolvedValue(undefined);
+    return ctx;
+  }
+
+  it('tells ai once the reply had at least one message accepted by GHL', async () => {
+    const { processor, aiBilling } = arrange({ status: 200, durationMs: 3 });
+    await processor.process(makeJob());
+    expect(aiBilling.notifyReply).toHaveBeenCalledTimes(1);
+    expect(aiBilling.notifyReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId: 'job-1',
+        contactId: expect.any(String),
+        locationId: expect.any(String),
+      }),
+    );
+  });
+
+  it('does not tell ai when every GHL send failed (nothing was delivered)', async () => {
+    const { processor, aiBilling } = arrange(undefined, true);
+    await processor.process(makeJob());
+    expect(aiBilling.notifyReply).not.toHaveBeenCalled();
+  });
+
+  it('never fails the reply when the notification rejects', async () => {
+    const { processor, aiBilling } = arrange({ status: 200, durationMs: 3 });
+    (aiBilling.notifyReply as jest.Mock).mockRejectedValue(new Error('redis down'));
     await expect(processor.process(makeJob())).resolves.toBeDefined();
   });
 });

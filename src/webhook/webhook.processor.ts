@@ -22,6 +22,7 @@ import { hasAdPreamble } from './ad-preamble';
 import { GroupFetcher, GroupSettings } from './group-fetcher';
 import { InsistenceClient } from './insistence-client';
 import { DebouncedMessage, FlushJobData, MessageDebouncer } from './message-debouncer';
+import { AiBillingNotifier } from './ai-billing-notifier';
 import { ResponseTimeTracker } from './response-time.tracker';
 import { WEBHOOK_FLUSH_JOB, WEBHOOK_QUEUE_TOKEN } from './webhook.tokens';
 
@@ -80,6 +81,7 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
     private readonly insistence: InsistenceClient,
     private readonly contactClient: GhlContactClient,
     private readonly responseTime: ResponseTimeTracker,
+    private readonly aiBilling: AiBillingNotifier,
   ) {
     super();
   }
@@ -594,6 +596,11 @@ export class WebhookProcessor extends WorkerHost implements OnApplicationBootstr
     // Only schedule follow-ups if the bot actually said something. If every
     // send failed there is nothing for the contact to "insist" against.
     if (sent > 0) {
+      // Per-contact monthly billing: tell ai at least one message was accepted by GHL.
+      // Queued and best-effort, so it can never delay or fail the reply.
+      await this.aiBilling
+        .notifyReply({ locationId, contactId, jobId: String(job.id) })
+        .catch(() => undefined);
       try {
         await this.insistence.schedule({
           jobId: String(job.id),

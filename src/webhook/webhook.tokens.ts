@@ -18,3 +18,10 @@ export const WEBHOOK_REDIS_CLIENT = 'WEBHOOK_REDIS_CLIENT';
  */
 export const RESPONSE_TIME_QUEUE_TOKEN = 'response-times';
 export const RESPONSE_TIME_JOB = 'persist-response-time';
+
+/**
+ * Queue (and job name) that tells `ai` the AI answered a contact, so it can count
+ * the contact for the month. Separate from the webhook queue on purpose.
+ */
+export const AI_BILLING_QUEUE_TOKEN = 'ai-billing-events';
+export const AI_BILLING_JOB = 'register-ai-contact';

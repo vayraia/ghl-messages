@@ -529,6 +529,18 @@ Postgres `ai` reads for the report) and then needs that table (see above).
 Without `DATABASE_URL` the tracker does nothing and no database connection is
 opened, so the Redis-only deployment keeps booting.
 
+## AI billing events (per contact and month)
+
+After a reply in which GHL accepted **at least one message**, the service tells `ai`
+(`POST CHAT_API_URL/billing/ai-contacts/register`, header `X-API-Key`) which
+contact was answered. `ai` decides from the group's settings whether the contact
+counts for the month (free or billable); this service decides nothing.
+
+The event goes through the `ai-billing-events` BullMQ queue (5 attempts, exponential
+backoff), so the HTTP call can never delay or fail a reply. A `4xx` other than `429`
+is a misconfiguration and is not retried. **It is off unless `AI_SERVICE_API_KEY` is
+set** (the service key `ai` requires); blank means off.
+
 ## `GET /v1/oauth/callback`
 
 Redirect URL registered in the GHL Marketplace app that owns the AI billing

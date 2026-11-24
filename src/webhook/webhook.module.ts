@@ -20,8 +20,11 @@ import { MessageDebouncer } from './message-debouncer';
 import { TemplateFollowupsClient } from './template-followups-client';
 import { MetaSignatureGuard } from './guards/meta-signature.guard';
 import { WebhookSecretGuard } from './guards/webhook-secret.guard';
+import { AiBillingNotifier } from './ai-billing-notifier';
+import { AiBillingProcessor } from './ai-billing.processor';
 import { ResponseTimeTracker } from './response-time.tracker';
 import {
+  AI_BILLING_QUEUE_TOKEN,
   RESPONSE_TIME_QUEUE_TOKEN,
   WEBHOOK_QUEUE_TOKEN,
   WEBHOOK_REDIS_CLIENT,
@@ -43,6 +46,7 @@ class RedisClientLifecycle implements OnApplicationShutdown {
     // Queue only (Redis): the tracker enqueues here; the Postgres worker lives in
     // ResponseTimeModule, loaded only when DATABASE_URL is set.
     BullModule.registerQueue({ name: RESPONSE_TIME_QUEUE_TOKEN }),
+    BullModule.registerQueue({ name: AI_BILLING_QUEUE_TOKEN }),
     BullModule.registerQueue({
       name: WEBHOOK_QUEUE_TOKEN,
       defaultJobOptions: {
@@ -81,6 +85,8 @@ class RedisClientLifecycle implements OnApplicationShutdown {
     TemplateFollowupsClient,
     MessageDebouncer,
     ResponseTimeTracker,
+    AiBillingNotifier,
+    AiBillingProcessor,
     WebhookSecretGuard,
     MetaSignatureGuard,
   ],
